@@ -1,129 +1,115 @@
 # TokenMeter 用量表
 
-轻量级 Windows 桌面悬浮窗应用，监控大模型 API（OpenAI 兼容 `chat/completions`）的 **Token 用量与费用**。
-无数据库、无复杂功能：贴边悬浮 → 悬停看概览 → 点击看详情，每 5 分钟自动轮询一次。
+轻量级 Windows 桌面悬浮窗应用：监控大模型 API（OpenAI 兼容 `chat/completions`）的 **Token 用量与费用**。贴边悬浮常驻屏幕边缘，随时瞄一眼今日消耗。
 
 ## ✨ 特性
 
-- 🪟 **桌面悬浮窗**：透明、无边框、置顶、不进任务栏（22×130 贴边竖条）
-- 🧲 **拖动 + 边缘吸附**：按住任意位置拖动窗口，贴近屏幕边缘(<32px)松手自动贴边
-- 🖱️ **三态交互**：贴边竖条 → 鼠标移入展开概览(输入/输出/费用) → 点击进入详情
-- ➕ **多模型管理**：DeepSeek / MiMo / ChatGPT 预设模板 + 手动填写（端点、Key、定价、响应解析路径），添加在**独立弹窗**完成
-- ⏱️ **定时轮询**：每 5 分钟向各模型发一次测试请求，解析 `usage` 字段并累计当日用量
-- 💰 **费用统计**：按 输入/输出 tokens ÷ 1000 × 单价 估算当日费用
-- 🔔 **系统托盘**：显示/隐藏主窗口、退出
-- 📦 **单文件安装包**：NSIS 打包，Tauri 1.5（占用小、启动快）
+- 🪟 **贴边悬浮窗**：透明、无边框、置顶、不进任务栏，常态是一条 22×130 的竖条
+- 🧲 **全区域拖动 + 边缘吸附**：按住任意位置拖动，松手时贴近屏幕边缘(<32px)自动贴边收起
+- 🖱️ **三态交互**：贴边竖条 → 鼠标移入展开概览(输入/输出/费用) → 点击进入详情(400×640)
+- ➕ **多模型管理**：内置 DeepSeek / MiMo / ChatGPT 预设，可手动配置端点、Key、定价与响应解析路径；支持**添加与编辑**（独立窗口表单）
+- ⏱️ **定时轮询**：每 10 分钟向各模型发一次最小请求，解析响应 `usage` 并累计当日用量；详情页也可 **↻ 手动轮询**
+- 💰 **费用估算**：输入/输出 tokens ÷ 1000 × 单价，按模型币种（¥ / $ / € …）显示
+- 🔔 **系统托盘**：显示 / 隐藏主窗口、退出
+- 📦 **单文件安装包**：Tauri 1.x + NSIS
+
+> 统计口径说明：TokenMeter 只统计**它自己发出的轮询/测试请求**的用量（响应 `usage` 为单次请求口径），并非第三方工具在你账号上的全部消耗。
+
+## 🖥️ 安装
+
+下载并运行发布版安装包（NSIS）：
+
+```
+src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe
+```
+
+需要 Windows 10/11 与 WebView2 Runtime（Win10 1803+ 通常已内置）。
+
+## 🚀 快速使用
+
+1. 托盘/悬浮条进入详情面板 → **+ 添加** → 独立窗口选模板或手填 → **测试连接** → 保存
+2. 既有模型可点 **编辑** 修改 Key / 价格 / 端点
+3. 详情面板 **↻ 轮询** 手动刷新今日用量；模型行下方或概览面板会显示最近一次轮询失败原因
+4. 按住窗口任意处拖动，贴近屏幕边缘松手即吸附贴边
+
+## ⚙️ 配置
+
+运行时在**工作目录**（开发模式）或 **exe 所在目录**（安装版）读写 `config.json`，
+首次启动自动生成默认值：
+
+```jsonc
+{
+  "models": [ /* 模型列表，示例见 config.example.json */ ],
+  "pollingInterval": 600000   // 轮询间隔 ms（默认 10 分钟）
+}
+```
+
+`models[].responsePath` 支持点号与数组下标，如 `usage.prompt_tokens`、`choices[0].usage.total_tokens`。
+配置损坏时会先备份为 `config.json.bak.<时间戳>` 再重置，不会静默清空。
+
+> 使用方式：把 [config.example.json](config.example.json) 复制为 `config.json` 并填入你的模型与密钥即可
+> （首次启动也会自动按默认值生成配置）。
+
+## 🛠️ 开发与构建（Windows）
+
+环境：Rust stable（MSVC）、Node.js ≥ 22.2、pnpm、WebView2 Runtime。
+
+```powershell
+pnpm install                          # 前端依赖
+pnpm tauri dev                        # 本地开发（Vite 热更新 + debug 运行）
+pnpm build                            # 仅前端构建（tsc && vite build → dist/）
+cargo build --features custom-protocol   # 后端 debug（在 src-tauri/ 下；独立跑 exe 用）
+pnpm tauri build --features custom-protocol   # 正式安装包（NSIS）
+```
+
+- 必须带 `--features custom-protocol`，否则前端 `dist` 不会被内嵌，窗口会白屏
+  （debug 模式默认加载 `http://localhost:1420`）。
+- 网络受限环境可改用一键脚本 `tools\build.ps1`（普通模式失败时自动回退本地镜像代理，
+  详见该脚本头部注释与 `tools/registry-proxy.mjs`）。
+- 重生成图标：`node tools\gen-icon.mjs`（无依赖生成 1024² 源图）→
+  `pnpm tauri icon <源图路径>` 产出 `src-tauri/icons/` 全套。
+
+常见问题（白屏、WebView2 报错等）见 [docs/quick-start.md](docs/quick-start.md)。
 
 ## 📁 工程结构
 
 ```
 TokenMeter/
-├── src/                        # 前端 (React + TS + Tailwind + Zustand)
-│   ├── App.tsx                 # 三态切换 / 窗口尺寸 / ?add=1 独立添加窗口
-│   ├── layout.ts               # 各状态窗口尺寸 + 吸附阈值
-│   ├── types.ts                # 类型 + 模型预设模板
-│   ├── styles.css
-│   ├── stores/useStore.ts      # Zustand 状态（模型/统计/edgeState）
-│   ├── hooks/useWindowDrag.ts  # 窗口拖动 + 边缘吸附
-│   └── components/
-│       ├── FloatingBar.tsx     # 贴边竖条
-│       ├── QuickInfo.tsx       # 悬停概览
-│       ├── DetailPanel.tsx     # 详情面板（添加/轮询/收起）
-│       └── ModelManager.tsx    # 添加模型表单（独立窗口/standalone）
-├── src-tauri/                  # 后端 (Rust + Tauri 1.x)
-│   ├── src/
-│   │   ├── main.rs             # 入口、托盘、命令注册
-│   │   ├── models.rs           # 数据模型（ModelConfig/AppConfig…）
-│   │   ├── commands.rs         # 12 个 Tauri 命令
-│   │   └── poller.rs           # 轮询引擎 + 连接测试
-│   ├── icons/                  # 全套应用图标（tauri icon 生成）
+├── src/                  # 前端：React 18 + TS + Tailwind + Zustand
+│   ├── App.tsx           # 三态切换 / 窗口尺寸 / 独立添加·编辑窗口(?add=1&?edit=)
+│   ├── layout.ts         # 各状态窗口尺寸 + 吸附阈值
+│   ├── components/       # FloatingBar / QuickInfo / DetailPanel / ModelManager
+│   ├── hooks/            # useWindowDrag（拖动 + 边缘吸附）
+│   ├── stores/           # useStore（Zustand）
+│   └── utils/            # 币种/金额格式化等
+├── src-tauri/            # 后端：Rust + Tauri 1.x
+│   ├── src/              # main.rs / models.rs / commands.rs / poller.rs
+│   ├── icons/            # tauri icon 全套图标
 │   ├── Cargo.toml
 │   └── tauri.conf.json
-├── tools/
-│   ├── build.ps1               # 一键构建脚本（schannel 异常时自动走本地代理）
-│   ├── registry-proxy.mjs      # 本地 cargo 稀疏镜像代理（Node，无依赖）
-│   ├── gen-icon.mjs            # 图标源图生成器
-│   └── icon-source.png
-├── docs/                       # 文档（见下方“文档”）
-├── config.example.json         # 配置示例（真实 config.json 含 Key，不入库）
-├── THIRD_PARTY_LICENSES.md     # 第三方依赖许可说明
+├── tools/                # build.ps1 / registry-proxy.mjs / gen-icon.mjs
+├── docs/                 # 架构 / 接口 / 上手文档
+├── config.example.json   # 配置模板（示例）
 └── package.json
 ```
-
-## 🛠️ 技术栈
-
-- **桌面框架**：Tauri 1.x（Rust，Windows / WebView2），`custom-protocol` 内嵌前端
-- **前端**：React 18 · TypeScript · Vite 4 · Tailwind CSS 3 · Zustand 4
-- **后端**：Rust · reqwest(rustls-tls) · tokio · serde · chrono · uuid · log/env_logger
-- **存储**：运行目录下 `config.json`（纯文件，无数据库）
-
-## 🚀 开发与构建（Windows）
-
-### 环境要求
-- Windows 10/11、WebView2 Runtime、Rust 工具链、Node.js 18+、pnpm
-
-### 常用命令
-
-```powershell
-pnpm install                          # 安装前端依赖
-pnpm build                            # 前端构建（tsc && vite build → dist/）
-cargo build --features custom-protocol  # 编译后端（需在 src-tauri/ 下；独立运行 exe 用）
-pnpm tauri build                      # 打正式安装包（NSIS）
-```
-
-- 独立运行 `src-tauri/target/debug/token-meter.exe` 需带 `custom-protocol`
-  feature，否则 debug 构建会去加载 `http://localhost:1420`（devPath）。
-- 日常一键构建（含网络兜底逻辑）可执行：`powershell -ExecutionPolicy Bypass -File tools\build.ps1`
-
-### ⚠️ 本机网络特殊情况
-部分环境（如本机）cargo/.NET 的 schannel TLS 会报 `SEC_E_NO_CREDENTIALS`，
-`tools/build.ps1` 会自动启动 `tools/registry-proxy.mjs` 本地代理（127.0.0.1:8765）
-走 Node/OpenSSL 下载依赖。构建期间建议关闭 DevSidecar 等代理工具以免劫持回环流量。
-
-### 🔧 故障排查
-- 应用启动即闪退、无窗口无托盘，控制台报 `CreateWebview ... 0x800700AA(资源在使用中)`：
-  删除 `%LOCALAPPDATA%\com.tokenmeter.app`（WebView2 缓存目录）后重启。
-
-## ⚙️ 配置
-
-应用运行时在**当前目录**读取/写回 `config.json`（首次启动自动用默认值）。字段：
-
-```jsonc
-{
-  "models": [ /* ModelConfig 数组，示例见 config.example.json */ ],
-  "pollingInterval": 300000,   // 轮询间隔 ms
-  "window": { "edgePosition": "right", "opacity": 0.9 }  // opacity 预留
-}
-```
-
-- ⚠️ **`config.json` 含真实 API Key，已被 `.gitignore` 排除，切勿提交**；仓库内仅提供 `config.example.json` 脱敏示例。
-- 模板默认值（`src/types.ts`）：DeepSeek(`deepseek-chat`) / MiMo(`mimo-v2.5-pro`, Token Plan 中国区端点) / ChatGPT(`gpt-4o`)。MiMo 走订阅 Credits 计费故价格填 0。
-- 轮询会真实发送对话请求（含推理 token），会消耗按量/套餐额度，可在代码里调大 `pollingInterval`。
-
-## 🧑‍💻 使用说明
-
-1. 点击详情面板 **+ 添加** → 独立窗口选择模板或手填 → **测试连接** → 保存
-2. 竖条整条可拖到屏幕边缘贴边；悬停看概览，点击进详情
-3. 详情面板 **↻ 轮询** 可随时手动刷新今日用量
-4. 托盘图标可隐藏/显示/退出
 
 ## 📄 文档
 
 - [docs/README.md](docs/README.md) — 文档索引
-- [architecture.md](docs/architecture.md) · [tech-stack.md](docs/tech-stack.md)
-  · [api-design.md](docs/api-design.md) · [quick-start.md](docs/quick-start.md)
-- [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) — 第三方依赖许可说明
+- [docs/quick-start.md](docs/quick-start.md) — 构建运行 / 使用说明 / 常见问题
+- [docs/architecture.md](docs/architecture.md) — 整体架构与模块划分
+- [docs/api-design.md](docs/api-design.md) — Tauri 命令、事件与配置 schema
+- [docs/tech-stack.md](docs/tech-stack.md) — 依赖与技术选型
 
 ## 📝 更新日志
 
 ### v0.1.0
+
 - 悬浮窗三态交互、拖动与边缘吸附、系统托盘
-- 模型管理（预设模板 + 独立添加窗口 + 测试连接 + 手动轮询）
-- 5 分钟自动轮询、今日 Token/费用统计
-- Tauri 1.x + NSIS 安装包、全套图标
+- 模型管理（预设模板、添加/编辑、测试连接、手动轮询、轮询失败提示）
+- 10 分钟自动轮询、今日 Token/费用统计（本地时区切日、按币种显示金额）
+- Tauri 1.x + NSIS 单文件安装包
 
 ## 📄 许可证
 
 [MIT](LICENSE)
-
-**TokenMeter** — 让 API 用量监控简单直观 🚀

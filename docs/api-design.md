@@ -65,29 +65,27 @@ Content-Type: application/json
 | `delete_model` | `id: string` | `ModelConfig[]` | 移除模型并清理其用量缓存，写盘 |
 | `test_connection` | `config: ModelConfig` | `string` | 用传入配置（未保存）发一次最小请求，成功返回“连接成功”，失败返回错误描述 |
 
-### 3.2 统计与窗口/轮询配置
+### 3.2 统计与手动轮询
 
 | 命令 | 参数 | 返回 | 行为 |
 |---|---|---|---|
 | `get_daily_stats` | `modelId: string` | `DailyStats` | 聚合该模型当天内存记录 |
 | `get_all_daily_stats` | — | `Record<modelId, DailyStats>` | 所有模型的今日统计 |
-| `get_window_config` | — | `WindowConfig` | 返回 `{ edgePosition, opacity }` |
-| `update_window_config` | `config: WindowConfig` | — | 更新并写盘 |
-| `update_polling_interval` | `interval: number(毫秒)` | — | 更新轮询间隔（默认 300000）并写盘 |
 | `trigger_poll` | — | — | **手动轮询**：遍历所有模型真实发请求，成功则写入 `usage_data`，最后 `emit_all("usage-updated", ())` |
 
-> `DailyStats = { inputTokens, outputTokens, totalTokens, requestCount, totalCost }`；`requestCount` 即当日记入的成功轮询次数。统计口径只有“今日”（自当天 UTC 0 点起），无周/月维度。
+> `DailyStats = { inputTokens, outputTokens, totalTokens, requestCount, totalCost }`；`requestCount` 即当日记入的成功轮询次数。统计口径只有“今日”（按**本地时区**零点起），无周/月维度。
 
 ## 4. 事件（前端 listen）
 
 | 事件 | 触发方 | payload | 前端行为 |
 |---|---|---|---|
-| `usage-updated` | `poller.rs`：每次轮询成功后；`commands.rs trigger_poll` 结束后 | 轮询时为 `model.id`；trigger_poll 为 `()` | `App.tsx` 收到后 `fetchAllStats()` 刷新今日统计 |
-| `models-changed` | 独立“添加模型”窗口保存成功后 `emit`（ModelManager.tsx） | — | 主窗口收到后重新 `fetchModels()` + `fetchAllStats()` |
+| `usage-updated` | `poller.rs` 每次轮询成功后；`commands.rs trigger_poll` 结束后 | `model.id` | `App.tsx` 收到后 `fetchAllStats()` 刷新今日统计 |
+| `models-changed` | 独立“添加/编辑模型”窗口保存成功后 `emit`（ModelManager.tsx） | — | 主窗口收到后重新 `fetchModels()` + `fetchAllStats()` |
+| `poll-status` | `poller.rs` / `commands.rs`（仅状态**变化**时） | `{ id, name, ok, error? }` | 更新 `pollStatus`，概览与详情展示最近一次轮询失败原因 |
 
 ## 5. 配置文件 schema（config.json / config.example.json）
 
-配置文件为运行目录下的 UTF-8 JSON，与 `AppConfig` 一一对应（字段 camelCase）：
+配置文件为工作目录（开发）或 exe 所在目录（安装版）下的 UTF-8 JSON，与 `AppConfig` 一一对应（字段 camelCase）：
 
 ```jsonc
 {
@@ -97,7 +95,7 @@ Content-Type: application/json
       "name": "示例模型",                        // 显示名
       "provider": "deepseek-chat",              // 请求体 model 字段（DeepSeek/MiMo/ChatGPT 模板值见 src/types.ts MODEL_TEMPLATES）
       "apiEndpoint": "https://api.deepseek.com/v1/chat/completions",
-      "apiKey": "请填入你的真实 API Key",         // 明文；config.example.json 中为占位符
+      "apiKey": "请填入你的 API Key",
       "inputPrice": 0.001,                      // 每 1K 输入 tokens
       "outputPrice": 0.002,                     // 每 1K 输出 tokens
       "currency": "CNY",
@@ -108,16 +106,11 @@ Content-Type: application/json
       }
     }
   ],
-  "pollingInterval": 300000,                    // 毫秒；默认 5 分钟
-  "window": {
-    "edgePosition": "right",                    // 贴边位置：left/right/top/bottom
-    "opacity": 0.9
-  }
+  "pollingInterval": 600000                     // 毫秒；默认 10 分钟
 }
 ```
 
 - 内置模板（`src/types.ts` `MODEL_TEMPLATES`）：DeepSeek `deepseek-chat`（CNY 0.001/0.002）、MiMo `mimo-v2.5-pro`（`token-plan-cn.xiaomimimo.com` 端点，价格为 **0**——Token Plan 按 Credits 计费，此处只统计 token）、ChatGPT `gpt-4o`（USD 0.005/0.015）。
-- `config.json` 含真实 API Key，已被 `.gitignore` 忽略；入库/分发请用脱敏的 `config.example.json`。
 
 ## 6. 内存模型与统计口径
 
@@ -126,17 +119,20 @@ Content-Type: application/json
 pub struct AppState {
     pub config: AppConfig,
     pub usage_data: HashMap<String, Vec<UsageRecord>>, // modelId → 当天成功轮询记录
+    pub config_path: PathBuf,                          // 启动时解析的 config.json 路径
 }
 ```
 
 - `UsageRecord.timestamp` 为 epoch 秒（`chrono::Utc::now().timestamp()`）；
-- 每次成功轮询 push 后裁剪 `retain(|r| r.timestamp >= today_start)`，`today_start` 为当天 UTC 0 点——因此内存中始终只有当天数据，跨天自动清零；
+- 每次成功轮询（自动或手动 `trigger_poll`）经 `append_and_prune` 推入记录并裁剪
+  `retain(|r| r.timestamp >= today_start)`，`today_start` 为**本地时区**当天零点——内存中始终只有当天数据，跨天自动清零；
 - 无持久化历史、无按日/周/月查询接口。
 
 ## 7. 约定与错误处理
 
 - 命令失败返回 `Result::Err(String)`，前端 catch 后以文案展示（如表单“测试连接”结果区）；
-- 轮询失败仅 `log::error!`，下一轮继续；不会因单个模型故障阻塞其他模型；
+- 轮询失败不会阻塞：自动轮询跳过失败模型继续下一轮；失败/恢复的状态变化通过 `poll-status` 事件
+  推送给前端展示（不会每周期重复推送同一错误）；
 - IPC 命名风格统一 snake_case（Tauri 默认），事件名 kebab-case（`usage-updated` / `models-changed`）。
 
 交互与窗口/拖拽细节见 [architecture.md](architecture.md)，构建与排障见 [quick-start.md](quick-start.md)。

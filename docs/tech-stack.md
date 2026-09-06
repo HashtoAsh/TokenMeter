@@ -120,16 +120,16 @@ env_logger = "0.10"
 
 端口固定 **1420**（strictPort），`envPrefix: ['VITE_', 'TAURI_']`，构建目标随 `TAURI_PLATFORM` 取 chrome105（Windows）。
 
-### 4.3 本机 cargo 配置（src-tauri/.cargo/config.toml）
+### 4.3 自定义 cargo 源（可选）
 
-该目录已被 `.gitignore` 忽略，是本机私有配置：把 `crates-io` 替换为本地稀疏镜像 `sparse+http://127.0.0.1:8765/`（`http.multiplexing = false`），用于绕开本机 cargo/.NET schannel TLS 的 `SEC_E_NO_CREDENTIALS` 故障。因此在 src-tauri 下直接执行 `cargo build` 前需先启动代理 `node tools\registry-proxy.mjs`，或直接使用一键脚本 `tools\build.ps1`。
+需要镜像/代理的受限网络环境可参考 `tools/registry-proxy.mjs` 与 `tools/build.ps1`（后者会自动生成临时 cargo 配置并构建）。`src-tauri/.cargo/` 为可选的本地源替换目录。
 
 ## 5. 平台与运行时
 
 - **仅 Windows**：依赖系统 WebView2（Windows 10 1803+ 自带）；窗口能力（透明、置顶、skipTaskbar、系统托盘）均为 Windows 语义。无 macOS/Linux 安装说明。
 - 环境要求：
   - Rust stable（MSVC toolchain，`rustup` 安装）
-  - Node.js 18+ 与 pnpm
+  - Node.js ≥ 22.2 与 pnpm（`package.json` engines）
   - WebView2 Runtime
 
 ## 6. 图标与资源
@@ -139,8 +139,8 @@ env_logger = "0.10"
 
 ## 7. 存储与配置
 
-- 唯一持久化文件：**运行目录下的 `config.json`**（UTF-8 JSON），无数据库、无 %APPDATA% 数据目录、无历史用量落盘；
+- 唯一持久化文件：运行目录下的 `config.json`（UTF-8 JSON），无数据库、无 %APPDATA% 数据目录、无历史用量落盘；
 - 历史用量仅存内存（当天裁剪），退出即清空；
-- API Key 以明文存放在 `config.json`，该文件已被 `.gitignore` 忽略、不入库；仓库提供脱敏示例 `config.example.json`。
+- 配置模板见仓库根 `config.example.json`。
 
 详细结构见 [architecture.md](architecture.md)，配置文件字段与命令接口见 [api-design.md](api-design.md)。
