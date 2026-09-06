@@ -1,629 +1,146 @@
-# TokenMeter 技术栈详细说明
+# TokenMeter 用量表 — 技术栈说明
 
-## 1. 技术栈选择理由
+## 1. 技术栈总览
 
-### 1.1 为什么选择 Tauri？
+| 层 | 技术 | 版本（以清单文件为准） |
+|---|---|---|
+| 桌面框架 | Tauri（Rust） | `tauri` crate **1.5**；`tauri-build` 1.5 |
+| 前端 | React + TypeScript | React ^18.2、TypeScript ^5.2 |
+| 构建 | Vite | ^4.5 |
+| 样式 | Tailwind CSS | ^3.3（postcss/autoprefixer） |
+| 状态管理 | Zustand | ^4.4 |
+| Tauri JS API | `@tauri-apps/api` | ^1.5 |
+| Tauri CLI | `@tauri-apps/cli` | ^1.6.x |
+| 包管理 | pnpm | — |
+| 平台 | **仅 Windows**（WebView2） | — |
 
-**轻量级优势**
-- 打包体积：约 5-10MB（Electron 约 150MB）
-- 内存占用：约 30-50MB（Electron 约 200-300MB）
-- 启动速度：< 1秒
+**明确不包含**：shadcn/ui、Recharts 或其他图表库、SQLite/rusqlite、keyring、任何数据库；无 ESLint/Prettier 相关脚本与依赖（package.json 中不存在）。
 
-**性能优势**
-- 使用 Rust 作为后端，系统级性能
-- 前端使用系统 WebView，无需捆绑 Chromium
-- 原生系统集成更好
+## 2. 前端依赖（package.json，真实）
 
-**安全性**
-- Rust 内存安全保证
-- 更小的攻击面
-- 权限控制更精细
-
-### 1.2 为什么选择 React + TypeScript？
-
-**React 优势**
-- 组件化开发，易于维护
-- 丰富的生态系统
-- 虚拟 DOM 性能优化
-- 学习资源丰富
-
-**TypeScript 优势**
-- 类型安全，减少运行时错误
-- 更好的 IDE 支持
-- 代码可维护性高
-- 重构更安全
-
-### 1.3 为什么选择 Tailwind CSS？
-
-**开发效率**
-- 原子化 CSS，快速构建 UI
-- 无需编写自定义 CSS
-- 响应式设计简单
-
-**性能**
-- 生产环境自动 purge 未使用的样式
-- 生成的 CSS 体积小
-- 无运行时开销
-
-## 2. 核心依赖库
-
-### 2.1 前端依赖
-
-```json
+```jsonc
 {
+  "name": "token-meter",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
   "dependencies": {
+    "@tauri-apps/api": "^1.5.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
-    "zustand": "^4.4.0",
-    "recharts": "^2.8.0",
-    "date-fns": "^2.30.0",
-    "uuid": "^9.0.0",
-    "@tauri-apps/api": "^1.5.0"
+    "zustand": "^4.4.0"
   },
   "devDependencies": {
-    "typescript": "^5.2.0",
-    "vite": "^4.5.0",
+    "@tauri-apps/cli": "^1.6.3",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.0.0",
-    "tailwindcss": "^3.3.0",
-    "postcss": "^8.4.0",
     "autoprefixer": "^10.4.0",
-    "eslint": "^8.50.0",
-    "prettier": "^3.0.0"
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.3.0",
+    "typescript": "^5.2.0",
+    "vite": "^4.5.0"
   }
 }
 ```
 
-### 2.2 Tauri/Rust 依赖
+- 运行时依赖极简：只有 React、Zustand 与 Tauri JS API——悬浮窗 UI 不需要组件库/图表/路由。
+- `pnpm build` = `tsc && vite build`，输出到 `dist/`（被 Rust 以 custom-protocol 内嵌）。
+- `pnpm tauri <...>` 直接透传 `@tauri-apps/cli`。
+
+## 3. Rust 依赖（src-tauri/Cargo.toml，真实）
 
 ```toml
+[package]
+name = "token-meter"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]   # 生产构建内嵌前端 dist
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
 [dependencies]
-tauri = { version = "1.5", features = ["api-all", "system-tray"] }
+tauri = { version = "1.5", features = ["http-all", "notification-all", "shell-open", "system-tray", "window-all"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rusqlite = { version = "0.31", features = ["bundled"] }
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
+reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
 tokio = { version = "1.0", features = ["full"] }
-keyring = "2.0"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4"] }
 log = "0.4"
 env_logger = "0.10"
 ```
 
-## 3. 开发环境配置
+要点：
 
-### 3.1 系统要求
+- **无 rusqlite / SQLite**，无 keyring、无 tauri-plugin 类数据库依赖；
+- `reqwest 0.11` 仅启用 `json` + `rustls-tls`（关闭默认特性，不使用系统 schannel），用于轮询请求与连接测试；
+- `tauri` 特性：`window-all`（setSize/setPosition/startDragging 等窗口能力）、`system-tray`、`shell-open`、`notification-all`（仅开启权限，当前无通知功能）、`http-all`；
+- `custom-protocol` feature 控制是否内嵌前端 `dist`。
 
-**Windows**
-- Windows 10/11 (64-bit)
-- Microsoft Visual C++ Build Tools
-- WebView2 Runtime (Windows 10 1803+)
+## 4. 关键工程配置
 
-**macOS**
-- macOS 10.15+
-- Xcode Command Line Tools
+### 4.1 tauri.conf.json（要点）
 
-**Linux**
-- Ubuntu 18.04+ / Debian 10+
-- 需要安装webkit2gtk
-
-### 3.2 开发工具
-
-**必需工具**
-```bash
-# Rust 工具链
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# Node.js (推荐 v18+)
-# 使用 nvm 或 fnm 管理版本
-
-# pnpm (包管理器)
-npm install -g pnpm
-
-# Tauri CLI
-cargo install tauri-cli
-```
-
-**推荐 IDE**
-- VS Code + 以下扩展：
-  - rust-analyzer (Rust 语言支持)
-  - Tauri (Tauri 开发支持)
-  - ES7+ React/Redux/React-Native snippets
-  - Tailwind CSS IntelliSense
-  - ESLint
-  - Prettier
-
-## 4. 项目初始化
-
-### 4.1 创建 Tauri 项目
-
-```bash
-# 使用 Tauri 脚手架
-pnpm create tauri-app token-meter --template react-ts
-
-# 进入项目目录
-cd token-meter
-
-# 安装依赖
-pnpm install
-```
-
-### 4.2 配置 Tailwind CSS
-
-```bash
-# 安装 Tailwind CSS
-pnpm add -D tailwindcss postcss autoprefixer
-
-# 初始化配置
-npx tailwindcss init -p
-```
-
-### 4.3 项目配置文件
-
-**vite.config.ts**
-```typescript
-import { defineConfig } from 'vite';
-import react from '@vitejs/plugin-react';
-
-export default defineConfig({
-  plugins: [react()],
-  clearScreen: false,
-  server: {
-    port: 1420,
-    strictPort: true,
-  },
-  envPrefix: ['VITE_', 'TAURI_'],
-  build: {
-    target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
-  },
-});
-```
-
-**tailwind.config.js**
-```javascript
-/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {
-      colors: {
-        primary: {
-          50: '#f0f9ff',
-          100: '#e0f2fe',
-          200: '#bae6fd',
-          300: '#7dd3fc',
-          400: '#38bdf8',
-          500: '#0ea5e9',
-          600: '#0284c7',
-          700: '#0369a1',
-          800: '#075985',
-          900: '#0c4a6e',
-        },
-      },
-      animation: {
-        'float': 'float 3s ease-in-out infinite',
-      },
-      keyframes: {
-        float: {
-          '0%, 100%': { transform: 'translateY(0px)' },
-          '50%': { transform: 'translateY(-10px)' },
-        },
-      },
-    },
-  },
-  plugins: [],
-}
-```
-
-## 5. 核心模块实现指南
-
-### 5.1 Tauri 窗口配置
-
-**tauri.conf.json**
-```json
+```jsonc
 {
   "build": {
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build",
-    "devPath": "http://localhost:1420",
+    "devPath": "http://localhost:1420",   // debug 模式加载的前端地址
     "distDir": "../dist"
   },
-  "package": {
-    "productName": "TokenMeter",
-    "version": "0.1.0"
-  },
+  "package": { "productName": "TokenMeter", "version": "0.1.0" },
   "tauri": {
-    "allowlist": {
-      "all": false,
-      "window": {
-        "all": true,
-        "setAlwaysOnTop": true,
-        "setDecorations": true,
-        "setResizable": true,
-        "setPosition": true,
-        "setSize": true,
-        "setSkipTaskbar": true
-      },
-      "shell": {
-        "all": false,
-        "execute": true,
-        "sidecar": true,
-        "open": true
-      },
-      "http": {
-        "all": true,
-        "request": true
-      },
-      "notification": {
-        "all": true
-      }
-    },
-    "windows": [
-      {
-        "label": "floating",
-        "title": "TokenMeter",
-        "width": 300,
-        "height": 200,
-        "resizable": true,
-        "transparent": true,
-        "decorations": false,
-        "alwaysOnTop": true,
-        "skipTaskbar": true,
-        "x": 100,
-        "y": 100
-      },
-      {
-        "label": "settings",
-        "title": "TokenMeter Settings",
-        "width": 800,
-        "height": 600,
-        "resizable": true,
-        "visible": false
-      }
-    ],
-    "systemTray": {
-      "iconPath": "icons/icon.png",
-      "iconAsTemplate": true
-    },
-    "security": {
-      "csp": null
-    },
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.tokenmeter.app",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ]
-    }
+    "allowlist": { /* window-* 全开；shell 仅 open；http/notification 全开 */ },
+    "windows": [{
+      "label": "main", "width": 300, "height": 160,
+      "resizable": false, "transparent": true,
+      "decorations": false, "alwaysOnTop": true, "skipTaskbar": true
+    }],
+    "systemTray": { "iconPath": "icons/icon.png", "iconAsTemplate": true },
+    "security": { "csp": null },
+    "bundle": { "targets": "nsis", "identifier": "com.tokenmeter.app" }
   }
 }
 ```
 
-### 5.2 系统托盘实现
+- 主窗口初始 300×160，透明/无边框/置顶/skipTaskbar；运行时前端按 docked/hovering/expanded 状态 `setSize`（22×130 / 320×400 / 400×640）。
+- 打包目标固定 **NSIS**（x64 安装包），不产出 macOS/Linux 包。
 
-```rust
-// src-tauri/src/main.rs
-use tauri::{
-    CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, SystemTrayMenuItem,
-};
+### 4.2 vite.config.ts
 
-fn create_system_tray() -> SystemTray {
-    let show = CustomMenuItem::new("show".to_string(), "显示悬浮窗");
-    let hide = CustomMenuItem::new("hide".to_string(), "隐藏悬浮窗");
-    let settings = CustomMenuItem::new("settings".to_string(), "设置");
-    let quit = CustomMenuItem::new("quit".to_string(), "退出");
+端口固定 **1420**（strictPort），`envPrefix: ['VITE_', 'TAURI_']`，构建目标随 `TAURI_PLATFORM` 取 chrome105（Windows）。
 
-    let tray_menu = SystemTrayMenu::new()
-        .add_item(show)
-        .add_item(hide)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(settings)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_item(quit);
+### 4.3 本机 cargo 配置（src-tauri/.cargo/config.toml）
 
-    SystemTray::new().with_menu(tray_menu)
-}
+该目录已被 `.gitignore` 忽略，是本机私有配置：把 `crates-io` 替换为本地稀疏镜像 `sparse+http://127.0.0.1:8765/`（`http.multiplexing = false`），用于绕开本机 cargo/.NET schannel TLS 的 `SEC_E_NO_CREDENTIALS` 故障。因此在 src-tauri 下直接执行 `cargo build` 前需先启动代理 `node tools\registry-proxy.mjs`，或直接使用一键脚本 `tools\build.ps1`。
 
-fn main() {
-    tauri::Builder::default()
-        .system_tray(create_system_tray())
-        .on_system_tray_event(|app, event| {
-            match event {
-                SystemTrayEvent::MenuItemClick { id, .. } => {
-                    match id.as_str() {
-                        "show" => {
-                            let window = app.get_window("floating").unwrap();
-                            window.show().unwrap();
-                        }
-                        "hide" => {
-                            let window = app.get_window("floating").unwrap();
-                            window.hide().unwrap();
-                        }
-                        "settings" => {
-                            let window = app.get_window("settings").unwrap();
-                            window.show().unwrap();
-                        }
-                        "quit" => {
-                            std::process::exit(0);
-                        }
-                        _ => {}
-                    }
-                }
-                _ => {}
-            }
-        })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
-}
-```
+## 5. 平台与运行时
 
-### 5.3 SQLite 数据库初始化
+- **仅 Windows**：依赖系统 WebView2（Windows 10 1803+ 自带）；窗口能力（透明、置顶、skipTaskbar、系统托盘）均为 Windows 语义。无 macOS/Linux 安装说明。
+- 环境要求：
+  - Rust stable（MSVC toolchain，`rustup` 安装）
+  - Node.js 18+ 与 pnpm
+  - WebView2 Runtime
 
-```rust
-// src-tauri/src/db/mod.rs
-use rusqlite::{Connection, Result};
-use std::fs;
-use std::path::PathBuf;
+## 6. 图标与资源
 
-pub struct Database {
-    conn: Connection,
-}
+- 图标源：`tools/icon-source.png`；
+- 生成：`tools/gen-icon.mjs` 产出源图 → `@tauri-apps/cli` 的 `tauri icon` 生成 `src-tauri/icons/` 全套（含 icon.ico、icon.icns、32x32.png、128x128.png、128x128@2x.png 及 Windows 商店尺寸等）。
 
-impl Database {
-    pub fn new(app_handle: &tauri::AppHandle) -> Result<Self> {
-        let app_dir = app_handle
-            .path_resolver()
-            .app_data_dir()
-            .expect("failed to get app data dir");
-        
-        fs::create_dir_all(&app_dir).unwrap();
-        let db_path = app_dir.join("tokenmeter.db");
-        let conn = Connection::open(db_path)?;
-        
-        let db = Database { conn };
-        db.initialize_tables()?;
-        Ok(db)
-    }
+## 7. 存储与配置
 
-    fn initialize_tables(&self) -> Result<()> {
-        self.conn.execute_batch(
-            "
-            CREATE TABLE IF NOT EXISTS models (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                api_endpoint TEXT NOT NULL,
-                api_key_encrypted TEXT NOT NULL,
-                pricing_json TEXT NOT NULL,
-                is_active BOOLEAN DEFAULT TRUE,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
+- 唯一持久化文件：**运行目录下的 `config.json`**（UTF-8 JSON），无数据库、无 %APPDATA% 数据目录、无历史用量落盘；
+- 历史用量仅存内存（当天裁剪），退出即清空；
+- API Key 以明文存放在 `config.json`，该文件已被 `.gitignore` 忽略、不入库；仓库提供脱敏示例 `config.example.json`。
 
-            CREATE TABLE IF NOT EXISTS usage_records (
-                id TEXT PRIMARY KEY,
-                model_id TEXT NOT NULL,
-                timestamp DATETIME NOT NULL,
-                input_tokens INTEGER NOT NULL,
-                output_tokens INTEGER NOT NULL,
-                total_tokens INTEGER NOT NULL,
-                cost REAL NOT NULL,
-                request_id TEXT,
-                metadata_json TEXT,
-                FOREIGN KEY (model_id) REFERENCES models(id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_usage_model_timestamp 
-            ON usage_records(model_id, timestamp);
-            
-            CREATE INDEX IF NOT EXISTS idx_usage_timestamp 
-            ON usage_records(timestamp);
-            "
-        )?;
-        Ok(())
-    }
-}
-```
-
-## 6. 前端组件架构
-
-### 6.1 Zustand 状态管理
-
-```typescript
-// src/stores/modelStore.ts
-import { create } from 'zustand';
-import { ModelConfig } from '../types';
-
-interface ModelState {
-  models: ModelConfig[];
-  activeModelId: string | null;
-  isLoading: boolean;
-  error: string | null;
-  
-  // Actions
-  fetchModels: () => Promise<void>;
-  addModel: (model: Omit<ModelConfig, 'id' | 'createdAt' | 'updatedAt'>) => Promise<void>;
-  updateModel: (id: string, updates: Partial<ModelConfig>) => Promise<void>;
-  deleteModel: (id: string) => Promise<void>;
-  setActiveModel: (id: string | null) => void;
-}
-
-export const useModelStore = create<ModelState>((set, get) => ({
-  models: [],
-  activeModelId: null,
-  isLoading: false,
-  error: null,
-
-  fetchModels: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const { invoke } = await import('@tauri-apps/api/tauri');
-      const models = await invoke<ModelConfig[]>('get_models');
-      set({ models, isLoading: false });
-    } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
-    }
-  },
-
-  addModel: async (modelData) => {
-    set({ isLoading: true, error: null });
-    try {
-      const { invoke } = await import('@tauri-apps/api/tauri');
-      const newModel = await invoke<ModelConfig>('add_model', { model: modelData });
-      set(state => ({ 
-        models: [...state.models, newModel], 
-        isLoading: false 
-      }));
-    } catch (error) {
-      set({ error: (error as Error).message, isLoading: false });
-    }
-  },
-
-  // ... 其他方法
-}));
-```
-
-### 6.2 悬浮窗组件
-
-```tsx
-// src/components/FloatingWindow/index.tsx
-import React from 'react';
-import { useUsageStore } from '../../stores/usageStore';
-import { useModelStore } from '../../stores/modelStore';
-
-export const FloatingWindow: React.FC = () => {
-  const { activeModelId } = useModelStore();
-  const { currentUsage, dailyStats } = useUsageStore();
-
-  return (
-    <div className="w-full h-full bg-white/80 backdrop-blur-md rounded-lg shadow-lg p-4 
-                    border border-gray-200 drag-region">
-      {/* 标题栏 */}
-      <div className="flex justify-between items-center mb-3">
-        <h3 className="text-sm font-semibold text-gray-700">TokenMeter</h3>
-        <div className="flex gap-1">
-          <button className="w-3 h-3 rounded-full bg-yellow-400 hover:bg-yellow-500" />
-          <button className="w-3 h-3 rounded-full bg-green-400 hover:bg-green-500" />
-          <button className="w-3 h-3 rounded-full bg-red-400 hover:bg-red-500" />
-        </div>
-      </div>
-
-      {/* 模型信息 */}
-      <div className="mb-3">
-        <div className="text-xs text-gray-500">当前模型</div>
-        <div className="text-sm font-medium text-gray-800">
-          {activeModelId ? 'DeepSeek V3' : '未选择模型'}
-        </div>
-      </div>
-
-      {/* 实时用量 */}
-      <div className="grid grid-cols-2 gap-2 mb-3">
-        <div className="bg-blue-50 p-2 rounded">
-          <div className="text-xs text-blue-600">输入 Tokens</div>
-          <div className="text-lg font-bold text-blue-700">
-            {currentUsage?.inputTokens?.toLocaleString() || '0'}
-          </div>
-        </div>
-        <div className="bg-green-50 p-2 rounded">
-          <div className="text-xs text-green-600">输出 Tokens</div>
-          <div className="text-lg font-bold text-green-700">
-            {currentUsage?.outputTokens?.toLocaleString() || '0'}
-          </div>
-        </div>
-      </div>
-
-      {/* 今日统计 */}
-      <div className="bg-gray-50 p-2 rounded">
-        <div className="text-xs text-gray-500 mb-1">今日统计</div>
-        <div className="flex justify-between text-sm">
-          <span>总请求: {dailyStats?.requestCount || 0}</span>
-          <span className="font-medium text-purple-600">
-            费用: ¥{dailyStats?.totalCost?.toFixed(2) || '0.00'}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-};
-```
-
-## 7. 构建与部署
-
-### 7.1 开发模式
-
-```bash
-# 启动开发服务器
-pnpm tauri dev
-
-# 仅前端开发
-pnpm dev
-
-# 仅 Rust 后端开发
-cd src-tauri && cargo run
-```
-
-### 7.2 生产构建
-
-```bash
-# 构建生产版本
-pnpm tauri build
-
-# 构建特定平台
-pnpm tauri build --target x86_64-pc-windows-msvc  # Windows
-pnpm tauri build --target x86_64-apple-darwin      # macOS
-pnpm tauri build --target x86_64-unknown-linux-gnu  # Linux
-```
-
-### 7.3 自动更新配置
-
-```json
-// tauri.conf.json
-{
-  "tauri": {
-    "updater": {
-      "active": true,
-      "endpoints": [
-        "https://releases.tokenmeter.app/{{target}}/{{current_version}}"
-      ],
-      "dialog": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUyNjQ2OUM3RkI0NjBFOEEKUldTTDJkWHZ3WHFoQjdIcWZ6YnN5K2hOZkwyZ0d2U0d6YkY2Tm5LcEd6R3p6YnM9Cg=="
-    }
-  }
-}
-```
-
-## 8. 性能优化建议
-
-### 8.1 前端优化
-- 使用 React.memo 避免不必要的重渲染
-- 使用 useMemo 和 useCallback 优化计算和回调
-- 虚拟滚动处理大量数据列表
-- 图表数据采样，避免渲染过多数据点
-
-### 8.2 后端优化
-- 使用连接池管理数据库连接
-- 批量插入优化大量数据写入
-- 异步处理非关键路径操作
-- 定期清理过期数据
-
-### 8.3 内存管理
-- 及时清理事件监听器
-- 避免内存泄漏（定时器、订阅等）
-- 大数据分页加载
-- 图片和资源懒加载
-
----
-
-**文档版本**：v1.0  
-**创建日期**：2026年9月6日  
-**最后更新**：2026年9月6日
+详细结构见 [architecture.md](architecture.md)，配置文件字段与命令接口见 [api-design.md](api-design.md)。

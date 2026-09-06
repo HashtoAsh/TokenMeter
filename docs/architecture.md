@@ -1,292 +1,153 @@
-# TokenMeter 用量表 - 软件架构设计
+# TokenMeter 用量表 — 架构说明
 
 ## 1. 项目概述
 
-TokenMeter 是一款轻量级悬浮窗桌面应用，用于实时监控各大模型 API 的 Token 用量。支持用户自定义添加和管理多个大模型服务（如 DeepSeek、MiMo 等），以悬浮窗形式展示用量统计，帮助开发者更好地控制 API 使用成本。
+TokenMeter 是一个 **Windows 桌面悬浮窗应用**：监控大模型（OpenAI 兼容的 `chat/completions` API）的 token 用量与费用。应用自身每隔 **5 分钟**向每个已配置模型的最小聊天请求端点轮询一次，从响应的 `usage` 字段读取 token 数并按单价折算费用，以贴边悬浮窗形式常驻屏幕边缘展示。
 
-## 2. 核心需求
+设计上刻意保持轻量，**明确不在范围内**的功能包括：
 
-### 2.1 功能需求
-- **实时监控**：悬浮窗实时显示当前 API 调用的 Token 用量
-- **多模型支持**：支持自定义添加多个大模型服务（DeepSeek、MiMo、OpenAI 等）
-- **用量统计**：按时间维度统计 Token 使用量（日/周/月）
-- **成本计算**：根据各模型定价计算费用
-- **悬浮窗显示**：桌面悬浮窗，可拖拽、可调整大小、半透明
-- **系统托盘**：最小化到系统托盘，后台运行
+- 无数据库（仅内存缓存 + 一份 JSON 配置文件）
+- 无预算告警、预算/用量提醒或通知开关
+- 无“周/月”等时间维度，只有**今日统计**（按自然日，自当天 UTC 0 点起）
+- 无全局快捷键、自动启动、主题/语言切换、通用“设置”面板
+- 无 JSON/CSV 数据导出、无图表库
+- 不拦截/代理其他程序的 API 请求，只监控自身发起的轮询
+- 仅 Windows（Tauri 1.5 + WebView2）上开发与打包，不支持 macOS / Linux
 
-### 2.2 非功能需求
-- **轻量级**：内存占用小，启动快速
-- **跨平台**：支持 Windows、macOS、Linux
-- **低侵入**：不干扰用户正常工作
-- **可扩展**：易于添加新的模型支持
-
-## 3. 技术栈推荐
-
-### 3.1 方案对比
-
-| 技术栈 | 优点 | 缺点 | 推荐度 |
-|--------|------|------|--------|
-| **Tauri + React/Vue** | 轻量（~10MB）、性能好、跨平台 | 学习曲线较陡、Rust 环境配置 | ⭐⭐⭐⭐⭐ |
-| **Electron + React/Vue** | 生态成熟、开发效率高 | 体积大（~150MB）、内存占用高 | ⭐⭐⭐ |
-| **Python + PyQt** | 开发简单、轻量 | 跨平台打包复杂、界面不够现代 | ⭐⭐⭐ |
-| **Flutter Desktop** | 性能好、UI 一致 | 生态相对年轻、桌面支持待完善 | ⭐⭐ |
-
-### 3.2 推荐技术栈：Tauri + React + TypeScript
-
-**前端层**
-- **框架**：React 18 + TypeScript
-- **UI 库**：Tailwind CSS + shadcn/ui（轻量、可定制）
-- **状态管理**：Zustand（轻量级状态管理）
-- **图表**：Recharts（轻量级图表库）
-
-**后端层**
-- **桌面框架**：Tauri 2.0
-- **语言**：Rust（系统级性能）
-- **HTTP 客户端**：reqwest（Rust HTTP 库）
-- **数据存储**：SQLite（通过 rusqlite）
-
-**开发工具**
-- **构建工具**：Vite（前端构建）
-- **包管理**：pnpm
-- **代码规范**：ESLint + Prettier + Clippy
-
-## 4. 系统架构
-
-### 4.1 分层架构图
+## 2. 整体结构与数据流
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      用户界面层 (UI Layer)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │  悬浮窗组件  │  │  配置面板   │  │  统计图表   │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    业务逻辑层 (Business Layer)                │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │ 模型管理器  │  │ 用量统计器 │  │ 成本计算器 │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    数据访问层 (Data Layer)                    │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │ 数据库操作  │  │ 配置文件   │  │ API 调用   │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    系统层 (System Layer)                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐          │
-│  │ 系统托盘    │  │ 窗口管理   │  │ 文件系统   │          │
-│  └─────────────┘  └─────────────┘  └─────────────┘          │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────── 前端（React 18 + WebView2）──────────────────────────┐
+│  FloatingBar(docked) ──hover──▶ QuickInfo(hovering) ──click──▶ DetailPanel(expanded) │
+│  ModelManager：独立窗口 add-model（index.html?add=1）                            │
+└───────────────▲────────────────────────────────────┬──────────────────────────────┘
+                │ invoke(Tauri 命令)                  │ listen(事件)
+                ▼                                    │ usage-updated / models-changed
+┌────────────────────────────── Rust 主进程（tauri 1.5）───────────────────────────┐
+│  commands.rs  get/add/update/delete_model、get_*_daily_stats、window/polling、trigger_poll │
+│  poller.rs    reqwest(rustls) ──POST apiEndpoint/chat/completions──▶ 大模型 API       │
+│  main.rs      系统托盘(显示主窗口/隐藏主窗口/退出)、setup 启动轮询、注册命令          │
+│  状态          AppState{ config, usage_data: HashMap<modelId, Vec<UsageRecord>> }   │
+│  持久化        config.json（运行目录，UTF-8 JSON，无数据库）                        │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 4.2 核心模块设计
+- 主窗口：`tauri.conf.json` 中 label 为 `main`，透明、无边框、置顶、`skipTaskbar`，初始 300×160，运行期由前端按状态 `setSize`。
+- 轮询产生的记录只保存在内存 `usage_data`，进程退出即丢弃；`config.json` 只保存模型与偏好配置，不存历史用量。
 
-#### 4.2.1 模型管理模块 (ModelManager)
-```typescript
-interface ModelConfig {
-  id: string;
-  name: string;           // 模型名称，如 "DeepSeek V3"
-  provider: string;       // 提供商，如 "DeepSeek"
-  apiEndpoint: string;    // API 端点
-  apiKey: string;         // API 密钥（加密存储）
-  pricing: {
-    inputTokenPrice: number;   // 输入 Token 价格（每 1K tokens）
-    outputTokenPrice: number;  // 输出 Token 价格（每 1K tokens）
-    currency: string;          // 货币单位
-  };
-  isActive: boolean;      // 是否启用监控
-  createdAt: Date;
-  updatedAt: Date;
-}
-```
-
-#### 4.2.2 用量统计模块 (UsageTracker)
-```typescript
-interface UsageRecord {
-  id: string;
-  modelId: string;
-  timestamp: Date;
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  cost: number;
-  requestId: string;      // 请求标识
-  metadata?: Record<string, any>;
-}
-
-interface UsageStats {
-  modelId: string;
-  period: 'day' | 'week' | 'month';
-  totalInputTokens: number;
-  totalOutputTokens: number;
-  totalCost: number;
-  requestCount: number;
-  averageTokensPerRequest: number;
-}
-```
-
-#### 4.2.3 悬浮窗模块 (FloatingWindow)
-- 窗口属性：半透明、可拖拽、可调整大小、置顶显示
-- 显示内容：当前模型、今日用量、实时请求、费用统计
-- 交互功能：点击展开详情、右键菜单、快捷键操作
-
-#### 4.2.4 数据存储模块 (DataStorage)
-```sql
--- 模型配置表
-CREATE TABLE models (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    provider TEXT NOT NULL,
-    api_endpoint TEXT NOT NULL,
-    api_key_encrypted TEXT NOT NULL,
-    pricing_json TEXT NOT NULL,
-    is_active BOOLEAN DEFAULT TRUE,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
--- 用量记录表
-CREATE TABLE usage_records (
-    id TEXT PRIMARY KEY,
-    model_id TEXT NOT NULL,
-    timestamp DATETIME NOT NULL,
-    input_tokens INTEGER NOT NULL,
-    output_tokens INTEGER NOT NULL,
-    total_tokens INTEGER NOT NULL,
-    cost REAL NOT NULL,
-    request_id TEXT,
-    metadata_json TEXT,
-    FOREIGN KEY (model_id) REFERENCES models(id)
-);
-
--- 索引
-CREATE INDEX idx_usage_model_timestamp ON usage_records(model_id, timestamp);
-CREATE INDEX idx_usage_timestamp ON usage_records(timestamp);
-```
-
-## 5. 数据流设计
-
-### 5.1 API 调用拦截流程
-```
-用户应用 → 大模型 API 请求 → TokenMeter 拦截 → 记录用量 → 转发请求
-                ↓
-        响应返回 → 解析 Token 使用 → 更新统计 → 返回响应
-```
-
-### 5.2 悬浮窗更新流程
-```
-数据库变化 → 事件触发 → 状态更新 → UI 重绘 → 悬浮窗刷新
-```
-
-## 6. 目录结构
+## 3. 目录结构（真实）
 
 ```
-token-meter/
-├── src-tauri/                 # Tauri 后端 (Rust)
-│   ├── src/
-│   │   ├── main.rs           # 主入口
-│   │   ├── lib.rs            # 库入口
-│   │   ├── commands/         # Tauri 命令
-│   │   ├── models/           # 数据模型
-│   │   ├── services/         # 业务服务
-│   │   ├── db/               # 数据库操作
-│   │   └── utils/            # 工具函数
-│   ├── Cargo.toml
-│   └── tauri.conf.json
-├── src/                       # 前端源码 (React)
-│   ├── components/           # React 组件
-│   │   ├── FloatingWindow/   # 悬浮窗组件
-│   │   ├── Settings/         # 设置面板
-│   │   ├── Statistics/       # 统计图表
-│   │   └── common/           # 通用组件
-│   ├── hooks/                # 自定义 Hooks
-│   ├── stores/               # Zustand 状态
-│   ├── services/             # API 服务
-│   ├── types/                # TypeScript 类型
-│   └── utils/                # 工具函数
-├── docs/                      # 项目文档
-├── package.json
-├── vite.config.ts
-├── tailwind.config.js
-└── README.md
+TokenMeter用量表/
+├── .gitignore                     # 忽略 config.json、dist、target、.cargo 等
+├── LICENSE                        # MIT
+├── config.example.json            # 配置脱敏示例（config.json 参考）
+├── THIRD_PARTY_LICENSES.md        # 第三方组件许可汇总
+├── package.json / pnpm-lock.yaml  # 前端依赖（pnpm）
+├── index.html / vite.config.ts / tsconfig*.json
+├── tailwind.config.js / postcss.config.js
+├── tools/
+│   ├── gen-icon.mjs               # 由源图生成全套应用图标
+│   ├── registry-proxy.mjs         # 本地 crates.io 稀疏镜像代理（绕 schannel TLS 故障）
+│   └── build.ps1                  # Rust 后端一键构建脚本
+├── src/                           # 前端源码（React）
+│   ├── main.tsx / App.tsx / styles.css / layout.ts / types.ts
+│   ├── stores/useStore.ts         # Zustand：models/stats/edgeState + invoke 封装
+│   ├── hooks/useWindowDrag.ts     # 窗口拖动 + 屏幕边缘吸附
+│   └── components/
+│       ├── FloatingBar.tsx        # 贴边竖条
+│       ├── QuickInfo.tsx          # hover 信息面板
+│       ├── DetailPanel.tsx        # 详情面板（列表/今日统计/添加/轮询/收起）
+│       └── ModelManager.tsx       # 添加/编辑模型表单（可 standalone）
+├── src-tauri/
+│   ├── Cargo.toml / build.rs / tauri.conf.json
+│   ├── .cargo/config.toml         # 本机私有（已 gitignore）：crates-io → 127.0.0.1:8765
+│   ├── icons/                     # tauri icon 生成的全套图标
+│   └── src/                       # Rust 后端（无 lib.rs，main.rs 内 mod）
+│       ├── main.rs                # 入口：托盘、setup 启动轮询、注册命令
+│       ├── models.rs              # ModelConfig/UsageRecord/DailyStats/AppConfig…
+│       ├── commands.rs            # Tauri 命令实现 + config.json 读写
+│       └── poller.rs              # 定时轮询、连接测试、用量解析与费用计算
+└── docs/                          # 本文档所在目录
 ```
 
-## 7. 开发计划
+> 注意：后端没有 `lib.rs`、没有 `commands/ models/ services/ db/` 等子目录模块；代码以 `mod` 声明组织在 `main.rs` 同级文件中。
 
-### Phase 1：基础框架搭建（1周）
-- [ ] 初始化 Tauri + React 项目
-- [ ] 配置 TypeScript、Tailwind CSS、ESLint
-- [ ] 实现基础悬浮窗功能
-- [ ] 系统托盘集成
+## 4. 后端（Rust）设计
 
-### Phase 2：核心功能开发（2周）
-- [ ] 模型配置管理界面
-- [ ] 数据库设计与实现
-- [ ] API 调用拦截与记录
-- [ ] 用量统计计算
+### 4.1 数据模型（`models.rs`）
 
-### Phase 3：高级功能（1周）
-- [ ] 统计图表展示
-- [ ] 成本计算与预算告警
-- [ ] 数据导出功能
-- [ ] 快捷键支持
+| 结构体 | 字段 | 说明 |
+|---|---|---|
+| `ModelConfig` | `id, name, provider, apiEndpoint, apiKey, inputPrice, outputPrice, currency, responsePath` | `provider` 实际作为请求体里的 `model` 字段；`responsePath` 为响应中取 token 数的点路径 |
+| `ResponsePath` | `inputTokens, outputTokens, totalTokens` | 默认 `usage.prompt_tokens / usage.completion_tokens / usage.total_tokens` |
+| `UsageRecord` | `timestamp(i64), inputTokens, outputTokens, totalTokens, cost` | 一次成功轮询的结果 |
+| `DailyStats` | `inputTokens, outputTokens, totalTokens, requestCount, totalCost` | 对某模型当日记录的聚合 |
+| `AppConfig` | `models, pollingInterval(u64 毫秒), window` | 默认 `pollingInterval: 300000`（5 分钟） |
+| `WindowConfig` | `edgePosition, opacity` | 默认 `edgePosition: "right"`, `opacity: 0.9` |
 
-### Phase 4：优化与发布（1周）
-- [ ] 性能优化
-- [ ] 错误处理与日志
-- [ ] 自动更新机制
-- [ ] 打包与分发
+全部字段经 serde 以 **camelCase** 命名输出/输入（Rust 侧 snake_case + `#[serde(rename)]`），结构体均实现 `Default`。
 
-## 8. 安全考虑
+### 4.2 入口（`main.rs`）
 
-### 8.1 API 密钥安全
-- 使用系统密钥链存储 API 密钥
-- 传输过程中使用 HTTPS
-- 内存中加密存储
+1. `env_logger::init()` 初始化日志；
+2. `commands::load_config()` 读取运行目录 `config.json`（缺失/损坏则用默认配置）；
+3. 构造 `Arc<Mutex<AppState>>` 并 `manage()` 注入；
+4. 创建系统托盘：菜单为 **显示主窗口 / 隐藏主窗口 / 退出**（无“设置”项），点击对应窗口 `main` 的 show/hide 或 `std::process::exit`；
+5. `setup` 中调用 `poller::start_polling(app_handle, state)` 启动后台轮询；
+6. `invoke_handler` 注册全部命令（见 api-design.md）。
 
-### 8.2 数据隐私
-- 所有数据本地存储，不上传云端
-- 用户可随时删除数据
-- 提供数据导出与备份功能
+### 4.3 命令层（`commands.rs`）
 
-## 9. 性能指标
+- 配置文件路径 = `std::env::current_dir() + "config.json"`（**运行目录**，非 `%APPDATA%`）；
+- 模型增删改命令都会先改内存状态再 `save_config` 落盘；`delete_model` 同时清掉该模型的用量缓存；
+- 统计命令对内存 `usage_data` 即时聚合，不查库。
 
-- **启动时间**：< 1秒
-- **内存占用**：< 50MB
-- **CPU 占用**：< 1%（空闲时）
-- **窗口响应**：< 16ms（60fps）
+### 4.4 轮询器（`poller.rs`）
 
-## 10. 扩展性设计
+- `start_polling`：`tauri::async_runtime::spawn` 一个循环——取当前模型快照与轮询间隔 → 逐模型 `poll_model_usage` → `sleep(pollingInterval)`；
+- `poll_model_usage`：POST 到 `apiEndpoint`（请求体见 api-design.md），成功后按 `responsePath` 从 JSON 逐层取数（点号分段 `get`），`totalTokens` 取不到时回退为 输入+输出；
+- 费用 = 输入 tokens ÷ 1000 × `inputPrice` + 输出 tokens ÷ 1000 × `outputPrice`；
+- 新记录推入 `usage_data[model.id]` 后裁剪，只保留当天（自 UTC 0 点起）的记录，然后 `emit_all("usage-updated", &model.id)` 通知前端；
+- 失败只记 `log::error!`，不影响其他模型与下一轮循环。
 
-### 10.1 插件系统（未来）
-- 支持自定义数据源插件
-- 支持自定义图表插件
-- 支持第三方通知集成
+## 5. 前端（React）设计
 
-### 10.2 模型适配器
-```typescript
-interface ModelAdapter {
-  // 解析 API 响应中的 Token 使用信息
-  parseUsage(response: any): UsageInfo;
-  
-  // 构建监控请求
-  buildMonitorRequest(config: ModelConfig): Request;
-  
-  // 验证 API 连接
-  validateConnection(config: ModelConfig): Promise<boolean>;
-}
-```
+### 5.1 三种窗口状态（`edgeState`，定义在 `types.ts`）
 
----
+| 状态 | 尺寸（逻辑像素，`layout.ts` WINDOW_SIZES） | 内容 |
+|---|---|---|
+| `docked` | 22 × 130 | `FloatingBar`：贴边竖条，整条可拖 |
+| `hovering` | 320 × 400 | `QuickInfo`：简单用量信息，整块可拖，点击展开 |
+| `expanded` | 400 × 640 | `DetailPanel`：详情，整块可拖 |
 
-**文档版本**：v1.0  
-**创建日期**：2026年9月6日  
-**最后更新**：2026年9月6日
+- `App.tsx` 按 `edgeState` 渲染对应组件，并监听事件 `usage-updated`、`models-changed` 刷新数据；另每 5 分钟 `fetchAllStats` 兜底刷新；
+- 状态切换时用 `getCurrent().setSize` 固定窗口尺寸；窗口贴**右缘**时向左展开，避免超出屏幕（`layout.ts` `SNAP_MARGIN = 32` 用于吸附判定）；
+- URL 带 `?add=1` 时单独渲染 `<ModelManager standalone />`（“添加模型”独立窗口 `WebviewWindow("add-model", url: "index.html?add=1")`，480×660，由 `DetailPanel` 的“+ 添加”按钮打开，已存在则复用并聚焦）。
+
+### 5.2 拖动与吸附（`hooks/useWindowDrag.ts`）
+
+- 指针按下（左键、且目标不是 `button/a/input/textarea/select/[data-no-drag]`）后捕获指针；移动超过阈值(5px)则调用 `getCurrent().startDragging()` 交给系统拖动；
+- 拖动结束后以 60ms 轮询窗口位置，位置稳定 250ms 判定“松手”；距屏幕任一 边缘 < `SNAP_MARGIN`(32px) 则吸附：窗口缩为 docked 尺寸并贴到该边缘，`edgeState → docked`；
+- 未触发拖动阈值的原地点击正常分发（不干扰按钮点击）。
+
+### 5.3 组件职责
+
+- `FloatingBar.tsx`：贴边竖条，显示当前模型与费用的极简信息，整条可拖、hover 展开；
+- `QuickInfo.tsx`：hover 信息面板，显示模型与今日 token/费用概要，点击进入 `expanded`；
+- `DetailPanel.tsx`：模型列表（切换、删除带二次确认）、每个模型的今日统计与总费用、头部“+ 添加 / ↻ 轮询(调 `trigger_poll`) / 收起(回 docked)”；
+- `ModelManager.tsx`：表单（模板选择、模型名称、模型ID(即请求体 model，字段名 provider)、API 地址、API Key、输入/输出单价、高级设置响应解析路径、测试连接、保存）；standalone 模式下保存成功后 `emit("models-changed")` 并关闭自身窗口。
+
+## 6. 状态管理与数据获取
+
+- `stores/useStore.ts`（Zustand）：封装 `invoke` 调用后端命令，维护 `models`、`stats`（`Record<modelId, DailyStats>`）、`selectedModelId`、`edgeState`、`showAddModel/showDetail`；
+- 初始化/事件触发 → `fetchModels()` + `fetchAllStats()`；删除当前选中模型后自动选第一个。
+
+## 7. 打包与运行形态
+
+- 主窗口透明、无边框、置顶、`skipTaskbar`（tauri.conf.json）；
+- 前端 `pnpm build` 产物进 `dist/`，由 Rust 端以 `custom-protocol` feature 内嵌；独立 exe 需 `cargo build --features custom-protocol`（否则 debug 会去加载 `devPath: http://localhost:1420`）；
+- 正式安装包：`pnpm tauri build` → `src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe`（bundle.targets = `nsis`，identifier `com.tokenmeter.app`）；
+- 图标：`tools/gen-icon.mjs` 生成源图，再由 `@tauri-apps/cli` 的 `tauri icon` 生成 `src-tauri/icons/` 全套。
+
+详细技术栈、命令接口与上手步骤分别见 [tech-stack.md](tech-stack.md)、[api-design.md](api-design.md)、[quick-start.md](quick-start.md)。

@@ -1,276 +1,126 @@
-# TokenMeter 快速开始指南
+# TokenMeter 用量表 — 快速上手（Windows）
 
-## 🎯 5 分钟快速上手
+> TokenMeter 只在 Windows 上开发与打包。本文面向开发者：构建运行、打包安装与常见问题。
+> 终端用户直接安装发布版 exe 即可，无需以下开发环境。
 
-本指南帮助您快速启动 TokenMeter 项目并开始开发。
+## 1. 安装包
 
-## 📋 前置条件检查
+正式安装包由 NSIS 打包产出：
 
-### Windows 用户
+```
+src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe
+```
+
+## 2. 环境要求（Windows）
+
+| 组件 | 说明 |
+|---|---|
+| Rust | stable，MSVC toolchain（`rustup toolchain install stable-x86_64-pc-windows-msvc`） |
+| Node.js 18+ | 与 pnpm（`npm i -g pnpm`） |
+| WebView2 Runtime | Windows 10 1803+ 通常已内置（应用依赖它渲染前端） |
+| Visual C++ Build Tools | Rust MSVC 链接所需 |
+
+无需 macOS/Linux 工具链。
+
+## 3. 构建与运行
+
+### 3.1 安装依赖
 
 ```powershell
-# 检查 Rust 是否安装
-rustc --version
-cargo --version
-
-# 检查 Node.js 是否安装
-node --version
-npm --version
-
-# 检查 pnpm 是否安装
-pnpm --version
-
-# 检查 Visual C++ Build Tools
-# 如果没有安装，请从以下链接下载：
-# https://visualstudio.microsoft.com/visual-cpp-build-tools/
-
-# 检查 WebView2 Runtime
-# Windows 10 1803+ 通常已预装
+pnpm install          # 前端依赖
 ```
 
-### macOS 用户
+Rust 依赖由 cargo 在构建时拉取（见下方网络注意事项）。
 
-```bash
-# 检查 Xcode Command Line Tools
-xcode-select --install
+### 3.2 本地开发（前端热更新）
 
-# 检查 Rust
-rustc --version
-
-# 检查 Node.js
-node --version
-
-# 安装 pnpm
-npm install -g pnpm
-```
-
-### Linux 用户
-
-```bash
-# Ubuntu/Debian
-sudo apt update
-sudo apt install -y \
-  libwebkit2gtk-4.0-dev \
-  build-essential \
-  curl \
-  wget \
-  libssl-dev \
-  libgtk-3-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev
-
-# 安装 Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-
-# 安装 Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
-
-# 安装 pnpm
-npm install -g pnpm
-```
-
-## 🚀 项目初始化
-
-### 1. 克隆项目
-
-```bash
-# 如果还没有项目目录
-git clone https://github.com/yourusername/token-meter.git
-cd token-meter
-
-# 或者如果已经在项目目录中
-cd "D:\CODE PROG\TokenMeter用量表"
-```
-
-### 2. 安装依赖
-
-```bash
-# 安装前端依赖
-pnpm install
-
-# 安装 Tauri CLI (如果还没有安装)
-cargo install tauri-cli
-```
-
-### 3. 启动开发服务器
-
-```bash
-# 方式 1: 启动完整开发环境（推荐）
+```powershell
 pnpm tauri dev
-
-# 方式 2: 分步启动
-# 终端 1: 启动前端开发服务器
-pnpm dev
-
-# 终端 2: 启动 Rust 后端
-cd src-tauri
-cargo run
 ```
 
-### 4. 查看应用
+等价于：先 `pnpm dev` 起 Vite（端口 **1420**），再在 `src-tauri` 下 debug 构建并运行——debug 模式会去加载 `devPath: http://localhost:1420`。
 
-- 应用启动后会显示悬浮窗
-- 系统托盘会出现 TokenMeter 图标
-- 右键托盘图标可以访问设置
+> 注意：`src-tauri\.cargo\config.toml`（本机私有、已 gitignore）把 crates-io 指向本地代理 `127.0.0.1:8765`。直接跑 cargo/tauri 前先启动代理：`node tools\registry-proxy.mjs`；推荐直接用下面的一键脚本。
 
-## 📝 基本配置
+### 3.3 一键构建 Rust 后端（推荐）
 
-### 1. 添加第一个模型
-
-1. 右键系统托盘图标 → 选择"设置"
-2. 点击"添加模型"
-3. 填写模型信息：
-
-```
-模型名称: DeepSeek V3
-提供商: DeepSeek
-API 端点: https://api.deepseek.com
-API 密钥: sk-your-api-key-here
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build.ps1
 ```
 
-4. 配置定价信息：
+脚本逻辑（`tools/build.ps1`）：
 
-```
-输入 Token 价格: 0.001 (每 1K tokens)
-输出 Token 价格: 0.002 (每 1K tokens)
-货币: CNY
-```
+1. 先试普通 `cargo fetch`；
+2. 失败（本机 cargo/.NET schannel TLS 报 `SEC_E_NO_CREDENTIALS`）→ 自动启动 `tools\registry-proxy.mjs`（本地 Node 稀疏镜像，`127.0.0.1:8765`，`http.multiplexing=false`）并配置 `CARGO_HOME` 指向可写缓存目录以**续传**已有下载；
+3. 最终以 `cargo build --features custom-protocol` 构建。
 
-5. 点击"测试连接"验证配置
-6. 保存配置
+首次代理拉取约 430 个 crate（1–3 分钟），之后走缓存。
 
-### 2. 调整悬浮窗
+### 3.4 前端产物与独立 exe
 
-- **拖拽**：按住标题栏拖动
-- **调整大小**：拖动窗口边缘
-- **透明度**：在设置中调整
-- **置顶**：默认开启，可在设置中关闭
-
-### 3. 设置快捷键
-
-默认快捷键：
-- `Ctrl/Cmd + Shift + T`：显示/隐藏悬浮窗
-- `Ctrl/Cmd + Shift + S`：打开设置
-- `Ctrl/Cmd + Shift + Q`：退出应用
-
-可以在设置中自定义快捷键。
-
-## 🔧 开发环境配置
-
-### IDE 设置 (VS Code)
-
-1. 安装推荐扩展：
-
-```bash
-# 打开 VS Code 扩展面板
-code --install-extension rust-lang.rust-analyzer
-code --install-extension tauri-apps.tauri-vscode
-code --install-extension dsznajder.es7-react-js-snippets
-code --install-extension bradlc.vscode-tailwindcss
-code --install-extension dbaeumer.vscode-eslint
-code --install-extension esbenp.prettier-vscode
+```powershell
+pnpm build                          # tsc && vite build → dist/
+# 前端 dist 由 Rust 以 custom-protocol feature 内嵌：
+#   进入 src-tauri 后执行（确保代理可用）：
+#     cargo build --features custom-protocol
+#   否则 debug 构建会尝试加载 http://localhost:1420 而白屏
 ```
 
-2. 配置 VS Code 设置：
+### 3.5 正式打包
 
-```json
-// .vscode/settings.json
-{
-  "editor.formatOnSave": true,
-  "editor.defaultFormatter": "esbenp.prettier-vscode",
-  "rust-analyzer.check.command": "clippy",
-  "typescript.preferences.importModuleSpecifier": "relative"
-}
+```powershell
+pnpm tauri build                    # 其 beforeBuildCommand 会先执行 pnpm build
 ```
 
-### 代码规范
+产物：`src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe`。
 
-```bash
-# 检查代码规范
-pnpm lint
+## 4. 使用说明
 
-# 自动修复
-pnpm lint:fix
+- **系统托盘**：右键图标 → 显示主窗口 / 隐藏主窗口 / 退出（无设置菜单）。
+- **悬浮窗三态交互**：
 
-# 格式化代码
-pnpm format
-
-# 类型检查
-pnpm type-check
+```
+docked 贴边竖条 (22×130) ──鼠标移入──▶ hovering 信息面板 (320×400)
+   ▲                                       │ 点击
+   │               收起 ◀───────────────────▼
+   └────────────── expanded 详情面板 (400×640)
 ```
 
-## 📊 使用示例
+  - 竖条/信息面板/详情面板整块按住拖动；松手时窗口贴近屏幕任一边缘（<32px）会自动**吸附贴边**并收起为 docked 竖条。
+  - 窗口默认贴右缘，展开时向左生长避免超出屏幕。
+- **查看统计**：详情面板顶部“↻ 轮询”可手动触发一次全模型轮询（真实发请求）；底部为该模型的今日统计（请求次数 / 输入、输出、总 Tokens / 今日总费用，费用保留 4 位小数）。
+- **添加模型**：详情面板“+ 添加”弹出独立窗口（`add-model`，480×660，`index.html?add=1`）。表单含：
+  - 快速选择模板：DeepSeek（`deepseek-chat`）、MiMo（`mimo-v2.5-pro`，token-plan-cn 端点，价格 0——Token Plan 按 Credits 计费只统计 token）、ChatGPT（`gpt-4o`）；
+  - 模型名称、模型ID（即请求体 `model`，如 `deepseek-chat`）、API 地址（**完整** chat/completions URL）、API Key（password 输入框）；
+  - 输入/输出价格：**每 1K tokens** 单价；
+  - 高级设置：响应解析路径（默认 `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`，按点路径取数）；
+  - “测试连接”先验证（成功后显示“连接成功”），再“保存”——保存后自动关闭窗口，主窗口刷新列表与统计。
+- **轮询机制**：应用启动后后台每 5 分钟（`pollingInterval`，默认 300000ms）向各模型发一次最小请求读取用量；今日用量仅存内存、当天数据次日自动清零。
 
-### 查看实时用量
+## 5. 配置文件
 
-悬浮窗会实时显示：
-- 当前模型名称
-- 输入/输出 Token 数量
-- 今日总请求数
-- 今日总费用
+- 运行时配置在 **运行目录的 `config.json`**（UTF-8 JSON；不读 %APPDATA%）。
+  - 不存在时按默认值创建：`pollingInterval: 300000`、`window: { edgePosition: "right", opacity: 0.9 }`、`models: []`；
+  - 模型、窗口配置、轮询间隔的修改都会即时写回该文件；
+  - **该文件含真实 API Key（明文）**，已被 `.gitignore` 忽略，绝不能入库。
+- 仓库根目录 `config.example.json` 是脱敏示例（占位 Key、含一个示例模型），字段说明见 [api-design.md](api-design.md) §5。
 
-### 查看统计图表
+## 6. 常见问题
 
-1. 右键托盘图标 → 选择"统计"
-2. 选择时间范围（日/周/月）
-3. 查看用量趋势图
-4. 查看费用分布图
+**Q1：cargo 拉取依赖失败 / 报 `SEC_E_NO_CREDENTIALS`（schannel TLS）？**
+本机 cargo/.NET 的 schannel TLS 在受限环境下不可用。使用 `tools\build.ps1`（自动启用本地代理）构建；构建时建议关闭 DevSidecar 以免端口/代理互相干扰。
 
-### 导出数据
+**Q2：应用启动白屏/WebView2 报“资源在使用中 / 0x800700AA”？**
+删除 `%LOCALAPPDATA%\com.tokenmeter.app` 缓存目录后重启应用。
 
-1. 打开设置面板
-2. 选择"数据管理"
-3. 选择导出格式（JSON/CSV）
-4. 选择导出路径
-5. 点击"导出"
+**Q3：`pnpm build` 后直接 `cargo run` 白屏？**
+debug 构建默认加载 `http://localhost:1420`。要么保持 `pnpm dev` 运行，要么用 `cargo build --features custom-protocol` 构建内嵌前端的 exe。
 
-## 🐛 常见问题
+**Q4：如何重生成图标？**
+`node tools\gen-icon.mjs` 生成源图，再在 `src-tauri` 下执行 `npx tauri icon <源图路径>`（或 `pnpm tauri icon`）重生成 `icons/` 全套。
 
-### Q: 应用无法启动
+## 7. 相关文档
 
-**A: 检查以下几点：**
-1. 确保 WebView2 Runtime 已安装（Windows）
-2. 确保 Rust 工具链是最新的：`rustup update`
-3. 清理并重新安装依赖：`rm -rf node_modules && pnpm install`
-
-### Q: 悬浮窗不显示
-
-**A: 尝试以下解决方案：**
-1. 检查系统托盘是否有图标
-2. 右键托盘图标 → 选择"显示悬浮窗"
-3. 检查窗口是否在屏幕外（可能需要重置位置）
-
-### Q: API 连接失败
-
-**A: 检查以下配置：**
-1. API 密钥是否正确
-2. API 端点是否可访问
-3. 网络连接是否正常
-4. 查看日志文件获取详细错误信息
-
-### Q: 用量数据不准确
-
-**A: 可能的原因：**
-1. 模型适配器配置错误
-2. API 响应格式不匹配
-3. 需要更新适配器代码
-
-## 📚 下一步
-
-- 阅读 [架构设计文档](architecture.md) 了解系统设计
-- 查看 [技术栈说明](tech-stack.md) 了解技术细节
-- 参考 [API 设计文档](api-design.md) 了解接口设计
-- 查看 [项目结构说明](project-structure.md) 了解代码组织
-
-## 🆘 获取帮助
-
-- 查看 [README.md](../README.md) 获取项目概述
-- 提交 [GitHub Issues](https://github.com/yourusername/token-meter/issues) 报告问题
-- 参与 [GitHub Discussions](https://github.com/yourusername/token-meter/discussions) 讨论
-
----
-
-**祝您开发愉快！** 🚀
-
-如有问题，请随时提 Issue 或联系维护者。
+- [architecture.md](architecture.md)：整体架构、模块划分与数据流
+- [tech-stack.md](tech-stack.md)：真实依赖与技术选型
+- [api-design.md](api-design.md)：Tauri 命令、事件、HTTP 轮询协议与 config schema

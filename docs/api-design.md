@@ -1,705 +1,142 @@
-# TokenMeter API 设计文档
+# TokenMeter 用量表 — 接口与协议说明
 
-## 1. 概述
+## 1. 范围说明
 
-本文档描述了 TokenMeter 与各大模型 API 的交互方式，以及内部 Tauri 命令接口设计。
+TokenMeter 没有独立服务端，也不拦截其他程序的请求。本文档覆盖两类接口：
 
-## 2. 大模型 API 适配
+1. **对外 HTTP 协议**：应用向已配置的大模型 API（OpenAI 兼容 `chat/completions`）发出的轮询/测试请求及其响应解析；
+2. **对内 IPC**：前端（WebView）与 Rust 主进程之间的 Tauri 命令与事件。
 
-### 2.1 统一适配器模式
+## 2. 与模型 API 的 HTTP 交互
 
-为了支持多个大模型服务，我们采用适配器模式，为每个模型提供商实现统一的接口。
+### 2.1 请求构造
 
-```typescript
-// src/types/adapter.ts
-export interface ModelAdapter {
-  /**
-   * 解析 API 响应中的 Token 使用信息
-   */
-  parseUsage(response: any): UsageInfo;
-  
-  /**
-   * 构建监控请求（如果需要主动查询用量）
-   */
-  buildUsageRequest(config: ModelConfig): RequestConfig;
-  
-  /**
-   * 验证 API 连接和密钥有效性
-   */
-  validateConnection(config: ModelConfig): Promise<ValidationResult>;
-  
-  /**
-   * 获取模型定价信息
-   */
-  getPricingInfo(): PricingInfo;
-}
+- 端点：`ModelConfig.apiEndpoint`，即**完整**的 `…/chat/completions` 地址（例如 `https://api.deepseek.com/v1/chat/completions`）；
+- 方法：`POST`；请求体最小化以省 token：
 
-export interface UsageInfo {
-  inputTokens: number;
-  outputTokens: number;
-  totalTokens: number;
-  model: string;
-  requestId?: string;
-}
+```jsonc
+// 定时轮询 poll_model_usage（poller.rs）
+{ "model": "<config.provider>",           // 注意：provider 字段即请求体 model
+  "messages": [{ "role": "user", "content": "count tokens" }],
+  "max_tokens": 10 }
 
-export interface ValidationResult {
-  isValid: boolean;
-  message: string;
-  models?: string[];  // 可用的模型列表
-}
+// 连接测试 test_model_connection（poller.rs）
+{ "model": "<config.provider>",
+  "messages": [{ "role": "user", "content": "hi" }],
+  "max_tokens": 5 }
+```
 
-export interface PricingInfo {
-  inputTokenPrice: number;   // 每 1K tokens 的价格
-  outputTokenPrice: number;
-  currency: string;
+- 请求头同时携带两种鉴权形式，以兼容各家网关：
+
+```
+api-key: <apiKey>
+Authorization: Bearer <apiKey>
+Content-Type: application/json
+```
+
+- 超时：轮询 30s，连接测试 10s；非 2xx 视为失败（轮询记日志，测试返回带状态码与响应体的错误）。
+
+### 2.2 响应解析与费用
+
+- 成功响应按 `ModelConfig.responsePath` 中的**点路径**从 JSON 取值（实现按 `.` 分段逐层 `get`），默认值即 OpenAI 兼容格式：
+
+```jsonc
+"responsePath": {
+  "inputTokens":  "usage.prompt_tokens",
+  "outputTokens": "usage.completion_tokens",
+  "totalTokens":  "usage.total_tokens"   // 缺失时回退为 input + output
 }
 ```
 
-### 2.2 DeepSeek API 适配器
+- 费用 = 输入 tokens ÷ 1000 × `inputPrice` + 输出 tokens ÷ 1000 × `outputPrice`（单价为“每 1K tokens”；`currency` 仅作展示单位）。
+- 解析不到 usage 字段时记为 0，不中断轮询。
 
-```typescript
-// src/services/adapters/deepseek.ts
-import { ModelAdapter, UsageInfo, ValidationResult, PricingInfo } from '../../types/adapter';
+## 3. Tauri 命令（IPC）
 
-export class DeepSeekAdapter implements ModelAdapter {
-  private readonly baseUrl = 'https://api.deepseek.com';
-  
-  parseUsage(response: any): UsageInfo {
-    // DeepSeek 响应格式
-    // {
-    //   "usage": {
-    //     "prompt_tokens": 100,
-    //     "completion_tokens": 50,
-    //     "total_tokens": 150
-    //   }
-    // }
-    
-    const usage = response.usage;
-    return {
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      model: response.model,
-      requestId: response.id,
-    };
-  }
-  
-  buildUsageRequest(config: ModelConfig) {
-    // DeepSeek 目前没有独立的用量查询 API
-    // 需要在每次 API 调用时从响应中获取用量
-    return {
-      url: `${this.baseUrl}/v1/chat/completions`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    };
-  }
-  
-  async validateConnection(config: ModelConfig): Promise<ValidationResult> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/models`, {
-        headers: {
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          isValid: true,
-          message: '连接成功',
-          models: data.data?.map((m: any) => m.id) || [],
-        };
-      } else {
-        return {
-          isValid: false,
-          message: `连接失败: ${response.status}`,
-        };
-      }
-    } catch (error) {
-      return {
-        isValid: false,
-        message: `连接错误: ${(error as Error).message}`,
-      };
-    }
-  }
-  
-  getPricingInfo(): PricingInfo {
-    // DeepSeek V3 定价 (2024年)
-    return {
-      inputTokenPrice: 0.001,   // ¥0.001 / 1K tokens
-      outputTokenPrice: 0.002,  // ¥0.002 / 1K tokens
-      currency: 'CNY',
-    };
-  }
-}
-```
+以下命令均在 `main.rs` 的 `invoke_handler` 注册，实现在 `commands.rs`；Rust 参数/返回值经 serde **camelCase** 编解码，前端用 `@tauri-apps/api` 的 `invoke` 调用。状态通过 `State<Arc<Mutex<AppState>>>` 访问。
 
-### 2.3 MiMo API 适配器
+### 3.1 模型管理
 
-```typescript
-// src/services/adapters/mimo.ts
-import { ModelAdapter, UsageInfo, ValidationResult, PricingInfo } from '../../types/adapter';
+| 命令 | 参数 | 返回 | 行为 |
+|---|---|---|---|
+| `get_models` | — | `ModelConfig[]` | 返回内存中的模型列表 |
+| `add_model` | `model: ModelConfig` | `ModelConfig[]` | 追加模型并写 `config.json`；ID 重复报错“模型ID已存在” |
+| `update_model` | `model: ModelConfig` | `ModelConfig[]` | 按 `id` 覆盖并写盘；不存在报错“模型不存在” |
+| `delete_model` | `id: string` | `ModelConfig[]` | 移除模型并清理其用量缓存，写盘 |
+| `test_connection` | `config: ModelConfig` | `string` | 用传入配置（未保存）发一次最小请求，成功返回“连接成功”，失败返回错误描述 |
 
-export class MiMoAdapter implements ModelAdapter {
-  private readonly baseUrl = 'https://api.mimo.com';
-  
-  parseUsage(response: any): UsageInfo {
-    // MiMo 响应格式（示例）
-    // {
-    //   "usage": {
-    //     "prompt_tokens": 100,
-    //     "completion_tokens": 50,
-    //     "total_tokens": 150
-    //   }
-    // }
-    
-    const usage = response.usage;
-    return {
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      model: response.model,
-      requestId: response.id,
-    };
-  }
-  
-  buildUsageRequest(config: ModelConfig) {
-    return {
-      url: `${this.baseUrl}/v1/chat/completions`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    };
-  }
-  
-  async validateConnection(config: ModelConfig): Promise<ValidationResult> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/models`, {
-        headers: {
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          isValid: true,
-          message: '连接成功',
-          models: data.data?.map((m: any) => m.id) || [],
-        };
-      } else {
-        return {
-          isValid: false,
-          message: `连接失败: ${response.status}`,
-        };
-      }
-    } catch (error) {
-      return {
-        isValid: false,
-        message: `连接错误: ${(error as Error).message}`,
-      };
-    }
-  }
-  
-  getPricingInfo(): PricingInfo {
-    // MiMo 定价 (示例)
-    return {
-      inputTokenPrice: 0.0008,
-      outputTokenPrice: 0.0016,
-      currency: 'CNY',
-    };
-  }
-}
-```
+### 3.2 统计与窗口/轮询配置
 
-### 2.4 通用 OpenAI 兼容适配器
+| 命令 | 参数 | 返回 | 行为 |
+|---|---|---|---|
+| `get_daily_stats` | `modelId: string` | `DailyStats` | 聚合该模型当天内存记录 |
+| `get_all_daily_stats` | — | `Record<modelId, DailyStats>` | 所有模型的今日统计 |
+| `get_window_config` | — | `WindowConfig` | 返回 `{ edgePosition, opacity }` |
+| `update_window_config` | `config: WindowConfig` | — | 更新并写盘 |
+| `update_polling_interval` | `interval: number(毫秒)` | — | 更新轮询间隔（默认 300000）并写盘 |
+| `trigger_poll` | — | — | **手动轮询**：遍历所有模型真实发请求，成功则写入 `usage_data`，最后 `emit_all("usage-updated", ())` |
 
-```typescript
-// src/services/adapters/openai-compatible.ts
-import { ModelAdapter, UsageInfo, ValidationResult, PricingInfo } from '../../types/adapter';
+> `DailyStats = { inputTokens, outputTokens, totalTokens, requestCount, totalCost }`；`requestCount` 即当日记入的成功轮询次数。统计口径只有“今日”（自当天 UTC 0 点起），无周/月维度。
 
-export class OpenAICompatibleAdapter implements ModelAdapter {
-  constructor(
-    private baseUrl: string,
-    private pricing: PricingInfo
-  ) {}
-  
-  parseUsage(response: any): UsageInfo {
-    const usage = response.usage;
-    return {
-      inputTokens: usage.prompt_tokens,
-      outputTokens: usage.completion_tokens,
-      totalTokens: usage.total_tokens,
-      model: response.model,
-      requestId: response.id,
-    };
-  }
-  
-  buildUsageRequest(config: ModelConfig) {
-    return {
-      url: `${this.baseUrl}/v1/chat/completions`,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    };
-  }
-  
-  async validateConnection(config: ModelConfig): Promise<ValidationResult> {
-    try {
-      const response = await fetch(`${this.baseUrl}/v1/models`, {
-        headers: {
-          'Authorization': `Bearer ${config.apiKey}`,
-        },
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        return {
-          isValid: true,
-          message: '连接成功',
-          models: data.data?.map((m: any) => m.id) || [],
-        };
-      } else {
-        return {
-          isValid: false,
-          message: `连接失败: ${response.status}`,
-        };
-      }
-    } catch (error) {
-      return {
-        isValid: false,
-        message: `连接错误: ${(error as Error).message}`,
-      };
-    }
-  }
-  
-  getPricingInfo(): PricingInfo {
-    return this.pricing;
-  }
-}
-```
+## 4. 事件（前端 listen）
 
-## 3. 适配器工厂
+| 事件 | 触发方 | payload | 前端行为 |
+|---|---|---|---|
+| `usage-updated` | `poller.rs`：每次轮询成功后；`commands.rs trigger_poll` 结束后 | 轮询时为 `model.id`；trigger_poll 为 `()` | `App.tsx` 收到后 `fetchAllStats()` 刷新今日统计 |
+| `models-changed` | 独立“添加模型”窗口保存成功后 `emit`（ModelManager.tsx） | — | 主窗口收到后重新 `fetchModels()` + `fetchAllStats()` |
 
-```typescript
-// src/services/adapterFactory.ts
-import { ModelAdapter } from '../types/adapter';
-import { DeepSeekAdapter } from './adapters/deepseek';
-import { MiMoAdapter } from './adapters/mimo';
-import { OpenAICompatibleAdapter } from './adapters/openai-compatible';
+## 5. 配置文件 schema（config.json / config.example.json）
 
-export class AdapterFactory {
-  private static adapters: Map<string, () => ModelAdapter> = new Map([
-    ['deepseek', () => new DeepSeekAdapter()],
-    ['mimo', () => new MiMoAdapter()],
-    ['openai', () => new OpenAICompatibleAdapter(
-      'https://api.openai.com',
-      { inputTokenPrice: 0.01, outputTokenPrice: 0.03, currency: 'USD' }
-    )],
-  ]);
-  
-  static registerAdapter(provider: string, factory: () => ModelAdapter): void {
-    this.adapters.set(provider.toLowerCase(), factory);
-  }
-  
-  static getAdapter(provider: string): ModelAdapter {
-    const factory = this.adapters.get(provider.toLowerCase());
-    if (!factory) {
-      throw new Error(`未找到适配器: ${provider}`);
-    }
-    return factory();
-  }
-  
-  static getSupportedProviders(): string[] {
-    return Array.from(this.adapters.keys());
-  }
-}
-```
+配置文件为运行目录下的 UTF-8 JSON，与 `AppConfig` 一一对应（字段 camelCase）：
 
-## 4. Tauri 命令接口
-
-### 4.1 模型管理命令
-
-```rust
-// src-tauri/src/commands/model.rs
-use tauri::command;
-use crate::db::Database;
-use crate::models::ModelConfig;
-
-#[command]
-pub async fn get_models(db: tauri::State<'_, Database>) -> Result<Vec<ModelConfig>, String> {
-    db.get_all_models().map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn add_model(
-    db: tauri::State<'_, Database>,
-    model: ModelConfig,
-) -> Result<ModelConfig, String> {
-    db.insert_model(&model).map_err(|e| e.to_string())?;
-    Ok(model)
-}
-
-#[command]
-pub async fn update_model(
-    db: tauri::State<'_, Database>,
-    id: String,
-    updates: serde_json::Value,
-) -> Result<ModelConfig, String> {
-    db.update_model(&id, &updates).map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn delete_model(
-    db: tauri::State<'_, Database>,
-    id: String,
-) -> Result<(), String> {
-    db.delete_model(&id).map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn test_model_connection(
-    provider: String,
-    api_endpoint: String,
-    api_key: String,
-) -> Result<ValidationResult, String> {
-    // 调用对应的适配器进行连接测试
-    let adapter = AdapterFactory::get_adapter(&provider);
-    let config = ModelConfig {
-        api_endpoint,
-        api_key,
-        ..Default::default()
-    };
-    
-    adapter.validate_connection(&config).await.map_err(|e| e.to_string())
-}
-```
-
-### 4.2 用量统计命令
-
-```rust
-// src-tauri/src/commands/usage.rs
-use tauri::command;
-use crate::db::Database;
-use crate::models::{UsageRecord, UsageStats};
-
-#[command]
-pub async fn get_usage_records(
-    db: tauri::State<'_, Database>,
-    model_id: Option<String>,
-    start_date: Option<String>,
-    end_date: Option<String>,
-    limit: Option<i32>,
-) -> Result<Vec<UsageRecord>, String> {
-    db.get_usage_records(model_id, start_date, end_date, limit)
-        .map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn get_usage_stats(
-    db: tauri::State<'_, Database>,
-    model_id: String,
-    period: String,  // "day", "week", "month"
-) -> Result<UsageStats, String> {
-    db.get_usage_stats(&model_id, &period).map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn get_total_cost(
-    db: tauri::State<'_, Database>,
-    start_date: String,
-    end_date: String,
-) -> Result<f64, String> {
-    db.get_total_cost(&start_date, &end_date).map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn record_usage(
-    db: tauri::State<'_, Database>,
-    record: UsageRecord,
-) -> Result<(), String> {
-    db.insert_usage_record(&record).map_err(|e| e.to_string())
-}
-```
-
-### 4.3 配置命令
-
-```rust
-// src-tauri/src/commands/config.rs
-use tauri::command;
-use crate::models::AppConfig;
-
-#[command]
-pub async fn get_config() -> Result<AppConfig, String> {
-    // 从配置文件读取
-    AppConfig::load().map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn update_config(config: AppConfig) -> Result<(), String> {
-    config.save().map_err(|e| e.to_string())
-}
-
-#[command]
-pub async fn export_data(
-    db: tauri::State<'_, Database>,
-    format: String,  // "json", "csv"
-    path: String,
-) -> Result<(), String> {
-    match format.as_str() {
-        "json" => db.export_to_json(&path).map_err(|e| e.to_string()),
-        "csv" => db.export_to_csv(&path).map_err(|e| e.to_string()),
-        _ => Err("不支持的导出格式".to_string()),
-    }
-}
-```
-
-## 5. HTTP 请求拦截
-
-### 5.1 系统代理拦截（推荐）
-
-使用系统代理设置，拦截所有 HTTP 请求：
-
-```rust
-// src-tauri/src/proxy/mod.rs
-use std::sync::Mutex;
-use crate::db::Database;
-use crate::services::AdapterFactory;
-
-pub struct ProxyServer {
-    db: Database,
-    port: u16,
-}
-
-impl ProxyServer {
-    pub fn new(db: Database, port: u16) -> Self {
-        Self { db, port }
-    }
-    
-    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 启动本地代理服务器
-        // 拦截对已配置模型 API 的请求
-        // 解析响应中的 usage 信息
-        // 存储到数据库
-        Ok(())
-    }
-    
-    fn should_intercept(&self, url: &str) -> bool {
-        // 检查 URL 是否匹配已配置的模型 API
-        let models = self.db.get_active_models().unwrap_or_default();
-        models.iter().any(|m| url.contains(&m.api_endpoint))
-    }
-    
-    fn parse_response(&self, provider: &str, response: &str) -> Option<UsageInfo> {
-        let adapter = AdapterFactory::get_adapter(provider).ok()?;
-        let json: serde_json::Value = serde_json::from_str(response).ok()?;
-        Some(adapter.parse_usage(&json))
-    }
-}
-```
-
-### 5.2 API 调用监听（替代方案）
-
-通过监听特定端口或使用浏览器扩展来捕获 API 调用。
-
-## 6. 数据格式
-
-### 6.1 前端请求格式
-
-```typescript
-// 获取模型列表
-const models = await invoke<ModelConfig[]>('get_models');
-
-// 添加模型
-const newModel = await invoke<ModelConfig>('add_model', {
-  model: {
-    name: 'DeepSeek V3',
-    provider: 'deepseek',
-    apiEndpoint: 'https://api.deepseek.com',
-    apiKey: 'sk-...',
-    pricing: {
-      inputTokenPrice: 0.001,
-      outputTokenPrice: 0.002,
-      currency: 'CNY',
-    },
-    isActive: true,
-  },
-});
-
-// 获取用量统计
-const stats = await invoke<UsageStats>('get_usage_stats', {
-  modelId: 'model-123',
-  period: 'day',
-});
-```
-
-### 6.2 数据库记录格式
-
-```json
+```jsonc
 {
-  "id": "uuid-v4",
-  "modelId": "model-123",
-  "timestamp": "2026-09-06T12:00:00Z",
-  "inputTokens": 150,
-  "outputTokens": 80,
-  "totalTokens": 230,
-  "cost": 0.00031,
-  "requestId": "req-abc123",
-  "metadata": {
-    "endpoint": "/v1/chat/completions",
-    "model": "deepseek-v3",
-    "latency": 1200
-  }
-}
-```
-
-## 7. 错误处理
-
-### 7.1 错误类型定义
-
-```typescript
-// src/types/errors.ts
-export enum ErrorCode {
-  NETWORK_ERROR = 'NETWORK_ERROR',
-  AUTH_ERROR = 'AUTH_ERROR',
-  RATE_LIMIT = 'RATE_LIMIT',
-  INVALID_RESPONSE = 'INVALID_RESPONSE',
-  DATABASE_ERROR = 'DATABASE_ERROR',
-  CONFIG_ERROR = 'CONFIG_ERROR',
-}
-
-export interface AppError {
-  code: ErrorCode;
-  message: string;
-  details?: any;
-  timestamp: Date;
-}
-```
-
-### 7.2 错误处理策略
-
-```typescript
-// src/utils/errorHandler.ts
-export class ErrorHandler {
-  static handle(error: AppError): void {
-    console.error(`[${error.code}] ${error.message}`, error.details);
-    
-    switch (error.code) {
-      case ErrorCode.AUTH_ERROR:
-        // 通知用户检查 API 密钥
-        this.notifyUser('API 认证失败，请检查密钥设置');
-        break;
-      case ErrorCode.RATE_LIMIT:
-        // 实施退避策略
-        this.implementBackoff();
-        break;
-      case ErrorCode.NETWORK_ERROR:
-        // 重试或提示网络问题
-        this.retryOrNotify(error);
-        break;
-      default:
-        // 记录日志，继续运行
-        break;
+  "models": [
+    {
+      "id": "model-example",                    // 前端生成：model-<时间戳>-<随机串>
+      "name": "示例模型",                        // 显示名
+      "provider": "deepseek-chat",              // 请求体 model 字段（DeepSeek/MiMo/ChatGPT 模板值见 src/types.ts MODEL_TEMPLATES）
+      "apiEndpoint": "https://api.deepseek.com/v1/chat/completions",
+      "apiKey": "请填入你的真实 API Key",         // 明文；config.example.json 中为占位符
+      "inputPrice": 0.001,                      // 每 1K 输入 tokens
+      "outputPrice": 0.002,                     // 每 1K 输出 tokens
+      "currency": "CNY",
+      "responsePath": {
+        "inputTokens": "usage.prompt_tokens",
+        "outputTokens": "usage.completion_tokens",
+        "totalTokens": "usage.total_tokens"
+      }
     }
-  }
-  
-  private static notifyUser(message: string): void {
-    // 发送系统通知
-  }
-  
-  private static implementBackoff(): void {
-    // 指数退避策略
-  }
-  
-  private static retryOrNotify(error: AppError): void {
-    // 重试逻辑
+  ],
+  "pollingInterval": 300000,                    // 毫秒；默认 5 分钟
+  "window": {
+    "edgePosition": "right",                    // 贴边位置：left/right/top/bottom
+    "opacity": 0.9
   }
 }
 ```
 
-## 8. 安全考虑
+- 内置模板（`src/types.ts` `MODEL_TEMPLATES`）：DeepSeek `deepseek-chat`（CNY 0.001/0.002）、MiMo `mimo-v2.5-pro`（`token-plan-cn.xiaomimimo.com` 端点，价格为 **0**——Token Plan 按 Credits 计费，此处只统计 token）、ChatGPT `gpt-4o`（USD 0.005/0.015）。
+- `config.json` 含真实 API Key，已被 `.gitignore` 忽略；入库/分发请用脱敏的 `config.example.json`。
 
-### 8.1 API 密钥存储
-
-使用系统密钥链安全存储 API 密钥：
+## 6. 内存模型与统计口径
 
 ```rust
-// src-tauri/src/security/keychain.rs
-use keyring::Entry;
-
-pub struct KeychainManager {
-    service: String,
-}
-
-impl KeychainManager {
-    pub fn new() -> Self {
-        Self {
-            service: "TokenMeter".to_string(),
-        }
-    }
-    
-    pub fn store_key(&self, model_id: &str, api_key: &str) -> Result<(), keyring::Error> {
-        let entry = Entry::new(&self.service, model_id)?;
-        entry.set_password(api_key)
-    }
-    
-    pub fn get_key(&self, model_id: &str) -> Result<String, keyring::Error> {
-        let entry = Entry::new(&self.service, model_id)?;
-        entry.get_password()
-    }
-    
-    pub fn delete_key(&self, model_id: &str) -> Result<(), keyring::Error> {
-        let entry = Entry::new(&self.service, model_id)?;
-        entry.delete_password()
-    }
+// models.rs（示意）
+pub struct AppState {
+    pub config: AppConfig,
+    pub usage_data: HashMap<String, Vec<UsageRecord>>, // modelId → 当天成功轮询记录
 }
 ```
 
-### 8.2 数据加密
+- `UsageRecord.timestamp` 为 epoch 秒（`chrono::Utc::now().timestamp()`）；
+- 每次成功轮询 push 后裁剪 `retain(|r| r.timestamp >= today_start)`，`today_start` 为当天 UTC 0 点——因此内存中始终只有当天数据，跨天自动清零；
+- 无持久化历史、无按日/周/月查询接口。
 
-敏感数据（如 API 密钥）在数据库中加密存储：
+## 7. 约定与错误处理
 
-```rust
-// src-tauri/src/security/encryption.rs
-use aes_gcm::{
-    aead::{Aead, KeyInit, OsRng},
-    Aes256Gcm, Nonce,
-};
+- 命令失败返回 `Result::Err(String)`，前端 catch 后以文案展示（如表单“测试连接”结果区）；
+- 轮询失败仅 `log::error!`，下一轮继续；不会因单个模型故障阻塞其他模型；
+- IPC 命名风格统一 snake_case（Tauri 默认），事件名 kebab-case（`usage-updated` / `models-changed`）。
 
-pub struct EncryptionManager {
-    cipher: Aes256Gcm,
-}
-
-impl EncryptionManager {
-    pub fn new(key: &[u8; 32]) -> Self {
-        let cipher = Aes256Gcm::new(key.into());
-        Self { cipher }
-    }
-    
-    pub fn encrypt(&self, plaintext: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let nonce = Nonce::from_slice(b"unique nonce"); // 12 bytes
-        let ciphertext = self.cipher.encrypt(nonce, plaintext.as_bytes())?;
-        Ok(base64::encode(&ciphertext))
-    }
-    
-    pub fn decrypt(&self, ciphertext: &str) -> Result<String, Box<dyn std::error::Error>> {
-        let nonce = Nonce::from_slice(b"unique nonce");
-        let ciphertext_bytes = base64::decode(ciphertext)?;
-        let plaintext = self.cipher.decrypt(nonce, ciphertext_bytes.as_ref())?;
-        Ok(String::from_utf8(plaintext)?)
-    }
-}
-```
-
----
-
-**文档版本**：v1.0  
-**创建日期**：2026年9月6日  
-**最后更新**：2026年9月6日
+交互与窗口/拖拽细节见 [architecture.md](architecture.md)，构建与排障见 [quick-start.md](quick-start.md)。
