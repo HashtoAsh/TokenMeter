@@ -1,0 +1,27 @@
+# ---- Node / 前端 ----
+node_modules/
+dist/
+.pnpm-store/
+pnpm-debug.log*
+
+# ---- Rust / Tauri 构建产物 ----
+src-tauri/target/
+# 本机 cargo 镜像/代理配置由 tools/build.ps1 运行时生成，不入库
+src-tauri/.cargo/
+*.rs.bk
+
+# ---- 运行时数据（config.json 含真实 API Key，绝不可入库）----
+config.json
+*.local.json
+.webview-data/
+.cargo-home/
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+*.log
+.idea/
+.vscode/
+*.suo
+*.user

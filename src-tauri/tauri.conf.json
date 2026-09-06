@@ -1,0 +1,70 @@
+{
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "beforeBuildCommand": "pnpm build",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist"
+  },
+  "package": {
+    "productName": "TokenMeter",
+    "version": "0.1.0"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": false,
+      "window": {
+        "all": true,
+        "startDragging": true,
+        "setAlwaysOnTop": true,
+        "setDecorations": true,
+        "setResizable": true,
+        "setPosition": true,
+        "setSize": true,
+        "setSkipTaskbar": true,
+        "show": true,
+        "hide": true
+      },
+      "shell": {
+        "all": false,
+        "open": true
+      },
+      "http": {
+        "all": true,
+        "request": true
+      },
+      "notification": {
+        "all": true
+      }
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "TokenMeter",
+        "width": 300,
+        "height": 160,
+        "resizable": false,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true
+      }
+    ],
+    "systemTray": {
+      "iconPath": "icons/icon.png",
+      "iconAsTemplate": true
+    },
+    "security": {
+      "csp": null
+    },
+    "bundle": {
+      "active": true,
+      "targets": "nsis",
+      "identifier": "com.tokenmeter.app",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/icon.ico"
+      ]
+    }
+  }
+}
