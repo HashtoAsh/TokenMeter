@@ -24,14 +24,16 @@ fn create_system_tray() -> tauri::SystemTray {
 }
 
 fn main() {
-    env_logger::init();
+    // 无 RUST_LOG 时默认输出 info 级日志，便于看到启动/轮询信息
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     
-    let config = commands::load_config();
-    log::info!("加载配置: {} 个模型", config.models.len());
+    let (config, config_path) = commands::load_config();
+    log::info!("加载配置: {} 个模型 (路径: {})", config.models.len(), config_path.display());
     
     let state = Arc::new(Mutex::new(AppState {
         config,
         usage_data: std::collections::HashMap::new(),
+        config_path,
     }));
     
     tauri::Builder::default()
@@ -75,9 +77,6 @@ fn main() {
             commands::test_connection,
             commands::get_daily_stats,
             commands::get_all_daily_stats,
-            commands::get_window_config,
-            commands::update_window_config,
-            commands::update_polling_interval,
             commands::trigger_poll,
         ])
         .run(tauri::generate_context!())

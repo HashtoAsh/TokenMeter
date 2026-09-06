@@ -64,15 +64,6 @@ pub struct AppConfig {
     pub models: Vec<ModelConfig>,
     #[serde(rename = "pollingInterval")]
     pub polling_interval: u64,
-    pub window: WindowConfig,
-}
-
-/// 窗口配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowConfig {
-    #[serde(rename = "edgePosition")]
-    pub edge_position: String,
-    pub opacity: f64,
 }
 
 /// 应用状态
@@ -80,6 +71,8 @@ pub struct WindowConfig {
 pub struct AppState {
     pub config: AppConfig,
     pub usage_data: std::collections::HashMap<String, Vec<UsageRecord>>,
+    /// 当前配置文件路径（启动时解析一次，读写共用同一路径）
+    pub config_path: std::path::PathBuf,
 }
 
 impl Default for ResponsePath {
@@ -92,21 +85,12 @@ impl Default for ResponsePath {
     }
 }
 
-impl Default for WindowConfig {
-    fn default() -> Self {
-        Self {
-            edge_position: "right".to_string(),
-            opacity: 0.9,
-        }
-    }
-}
-
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
             models: Vec::new(),
-            polling_interval: 300000,
-            window: WindowConfig::default(),
+            // 默认 10 分钟轮询一次（P0-1 语义确认为“本请求用量”，避免轮询过频）
+            polling_interval: 600000,
         }
     }
 }

@@ -3,8 +3,14 @@
 // Usage: node tools/gen-icon.mjs [out.png]
 import { deflateSync, crc32 } from 'node:zlib';
 import { writeFileSync } from 'node:fs';
+import { join, isAbsolute } from 'node:path';
 
-const OUT = process.argv[2] || 'tools/icon-source.png';
+// 输出路径锚定脚本所在目录（.mjs 为 ESM，没有 __dirname；勿用相对 cwd 的裸路径）
+const SCRIPT_DIR = import.meta.dirname;
+const OUT_ARG = process.argv[2];
+const OUT = OUT_ARG
+  ? (isAbsolute(OUT_ARG) ? OUT_ARG : join(SCRIPT_DIR, OUT_ARG))
+  : join(SCRIPT_DIR, 'icon-source.png');
 const S = 1024;                 // canvas size
 const R = 190;                  // rounded-corner radius
 const M = 96;                   // outer margin of rounded square
@@ -86,5 +92,10 @@ const png = Buffer.concat([
   chunk('IDAT', deflateSync(raw, { level: 9 })),
   chunk('IEND', Buffer.alloc(0)),
 ]);
-writeFileSync(OUT, png);
-console.log(`wrote ${OUT} (${png.length} bytes)`);
+try {
+  writeFileSync(OUT, png);
+  console.log(`wrote ${OUT} (${png.length} bytes)`);
+} catch (err) {
+  console.error(`failed to write ${OUT}: ${err?.message ?? err}`);
+  process.exitCode = 1;
+}

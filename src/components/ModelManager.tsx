@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../stores/useStore';
 import { MODEL_TEMPLATES, type ModelConfig } from '../types';
 import { invoke } from '@tauri-apps/api/tauri';
 import { emit } from '@tauri-apps/api/event';
 import { getCurrent } from '@tauri-apps/api/window';
+import { currencySymbol } from '../utils/money';
 
 const generateId = () => 'model-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
 
@@ -14,6 +15,12 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
     standalone ||
     (typeof window !== 'undefined' &&
       new URLSearchParams(window.location.search).get('add') === '1');
+
+  // ?edit=<id>：编辑既有模型（复用同一表单，保存走 update_model）
+  const editId =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('edit') ?? null
+      : null;
 
   const closeWindow = async () => {
     if (isStandalone) {
@@ -43,6 +50,26 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
   });
 
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // 编辑模式：加载既有模型配置并预填表单
+  useEffect(() => {
+    if (!editId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await invoke<ModelConfig[]>('get_models');
+        const found = list.find(m => m.id === editId);
+        if (!found) {
+          if (!cancelled) setTestResult({ success: false, message: '未找到该模型（可能已被删除）' });
+          return;
+        }
+        if (!cancelled) setForm(found);
+      } catch (e) {
+        if (!cancelled) setTestResult({ success: false, message: String(e) });
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [editId]);
 
   // 选择模板
   const selectTemplate = (template: typeof MODEL_TEMPLATES[0]) => {
@@ -79,7 +106,11 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
     }
     try {
       if (isStandalone) {
-        await invoke('add_model', { model: form });
+        if (editId) {
+          await invoke('update_model', { model: form });
+        } else {
+          await invoke('add_model', { model: form });
+        }
         await emit('models-changed');
         await closeWindow();
       } else {
@@ -95,7 +126,7 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
       <div className="bg-gray-900 rounded-lg w-96 max-h-[90vh] overflow-y-auto">
         {/* 头部 */}
         <div className="flex items-center justify-between p-4 border-b border-gray-700">
-          <h3 className="text-white font-medium">添加模型</h3>
+          <h3 className="text-white font-medium">{editId ? '编辑模型' : '添加模型'}</h3>
           <button
             onClick={closeWindow}
             className="text-gray-400 hover:text-white"
@@ -169,7 +200,7 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
           {/* 定价 */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs text-gray-400">输入价格 (元/千tokens)</label>
+              <label className="text-xs text-gray-400">输入价格 ({currencySymbol(form.currency)}/千 tokens)</label>
               <input
                 type="number"
                 step="0.0001"
@@ -179,7 +210,7 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
               />
             </div>
             <div>
-              <label className="text-xs text-gray-400">输出价格 (元/千tokens)</label>
+              <label className="text-xs text-gray-400">输出价格 ({currencySymbol(form.currency)}/千 tokens)</label>
               <input
                 type="number"
                 step="0.0001"
@@ -188,6 +219,23 @@ export default function ModelManager({ standalone = false }: { standalone?: bool
                 className="w-full mt-1 px-3 py-2 bg-gray-800 text-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
               />
             </div>
+          </div>
+
+          {/* 币种 */}
+          <div>
+            <label className="text-xs text-gray-400">币种</label>
+            <select
+              value={form.currency}
+              onChange={e => setForm(prev => ({ ...prev, currency: e.target.value }))}
+              className="w-full mt-1 px-3 py-2 bg-gray-800 text-white rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="CNY">CNY（¥）</option>
+              <option value="USD">USD（$）</option>
+              <option value="EUR">EUR（€）</option>
+              <option value="GBP">GBP（£）</option>
+              <option value="JPY">JPY（¥）</option>
+              <option value="HKD">HKD（HK$）</option>
+            </select>
           </div>
 
           {/* 高级设置 */}

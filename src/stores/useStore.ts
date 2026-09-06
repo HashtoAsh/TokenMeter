@@ -7,6 +7,8 @@ interface AppState {
   models: ModelConfig[];
   // 各模型今日统计
   stats: Record<string, DailyStats>;
+  // 各模型最近一次轮询状态（成功/失败）
+  pollStatus: Record<string, { ok: boolean; error?: string }>;
   // 当前选中的模型ID
   selectedModelId: string | null;
   // 贴边状态
@@ -26,11 +28,13 @@ interface AppState {
   setEdgeState: (state: EdgeState) => void;
   setShowAddModel: (show: boolean) => void;
   setShowDetail: (show: boolean) => void;
+  setPollStatus: (id: string, status: { ok: boolean; error?: string }) => void;
 }
 
 export const useStore = create<AppState>((set, get) => ({
   models: [],
   stats: {},
+  pollStatus: {},
   selectedModelId: null,
   edgeState: 'docked',
   showAddModel: false,
@@ -97,4 +101,6 @@ export const useStore = create<AppState>((set, get) => ({
   setEdgeState: (state) => set({ edgeState: state }),
   setShowAddModel: (show) => set({ showAddModel: show }),
   setShowDetail: (show) => set({ showDetail: show }),
+  setPollStatus: (id, status) =>
+    set(s => ({ pollStatus: { ...s.pollStatus, [id]: status } })),
 }));

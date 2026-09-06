@@ -28,10 +28,20 @@ function App() {
       fetchModels();
       fetchAllStats();
     });
+    const unlistenStatus = listen<{ id?: string; ok?: boolean; error?: string }>(
+      'poll-status',
+      (e) => {
+        const p = e.payload;
+        if (p?.id) {
+          useStore.getState().setPollStatus(p.id, { ok: !!p.ok, error: p.error });
+        }
+      },
+    );
     return () => {
       clearInterval(interval);
       unlistenUsage.then((fn) => fn());
       unlistenModels.then((fn) => fn());
+      unlistenStatus.then((fn) => fn());
     };
   }, []);
 

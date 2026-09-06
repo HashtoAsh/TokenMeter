@@ -1,12 +1,14 @@
 import { useStore } from '../stores/useStore';
 import { useWindowDrag } from '../hooks/useWindowDrag';
+import { formatMoney, formatTokens } from '../utils/money';
 
 export default function QuickInfo() {
-  const { models, stats, selectedModelId, setEdgeState, setShowDetail, setSelectedModel } = useStore();
+  const { models, stats, pollStatus, selectedModelId, setEdgeState, setShowDetail, setSelectedModel } = useStore();
   const dragProps = useWindowDrag();
   
   const selectedModel = models.find(m => m.id === selectedModelId) || models[0];
   const currentStats = selectedModel ? stats[selectedModel.id] : null;
+  const currentStatus = selectedModel ? pollStatus[selectedModel.id] : undefined;
 
   // 鼠标离开时回到贴边状态
   const handleMouseLeave = () => {
@@ -60,9 +62,16 @@ export default function QuickInfo() {
           <div className="bg-gray-700/50 rounded p-2">
             <div className="text-xs text-gray-400">今日费用</div>
             <div className="text-xl font-mono text-yellow-400">
-              ¥{currentStats?.totalCost?.toFixed(4) || '0.0000'}
+              {formatMoney(currentStats?.totalCost ?? 0, selectedModel.currency)}
             </div>
           </div>
+
+          {/* 最近一次轮询失败提示 */}
+          {currentStatus && !currentStatus.ok && (
+            <div className="text-[11px] text-red-400 truncate" title={currentStatus.error}>
+              ⚠ 最近轮询失败：{currentStatus.error}
+            </div>
+          )}
         </div>
       ) : (
         <div className="text-center text-gray-500 text-sm mt-8">
@@ -76,15 +85,4 @@ export default function QuickInfo() {
       </div>
     </div>
   );
-}
-
-// 格式化token数量
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) {
-    return (tokens / 1000000).toFixed(1) + 'M';
-  }
-  if (tokens >= 1000) {
-    return (tokens / 1000).toFixed(1) + 'K';
-  }
-  return tokens.toString();
 }

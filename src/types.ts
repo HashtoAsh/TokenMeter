@@ -24,12 +24,6 @@ export interface DailyStats {
   totalCost: number;
 }
 
-// 窗口配置
-export interface WindowConfig {
-  edgePosition: 'left' | 'right' | 'top' | 'bottom';
-  opacity: number;
-}
-
 // 贴边状态
 export type EdgeState = 'docked' | 'hovering' | 'expanded';
 

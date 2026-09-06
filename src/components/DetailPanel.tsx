@@ -3,17 +3,21 @@ import { WebviewWindow } from '@tauri-apps/api/window';
 import { invoke } from '@tauri-apps/api/tauri';
 import { useStore } from '../stores/useStore';
 import { useWindowDrag } from '../hooks/useWindowDrag';
+import { formatMoney, formatTokens } from '../utils/money';
 
-// 打开独立的“添加模型”窗口（不占用贴边主窗口）
-async function openAddModelWindow() {
+// 打开独立的“添加/编辑模型”窗口（不占用贴边主窗口）
+async function openAddModelWindow(modelId?: string) {
   const existing = WebviewWindow.getByLabel('add-model');
   if (existing) {
-    try { await existing.show(); await existing.setFocus(); } catch { /* ignore */ }
-    return;
+    // 旧窗口内容可能对应另一个模型：关闭重建，避免陈旧表单
+    try { await existing.close(); } catch { /* ignore */ }
   }
+  const url = modelId
+    ? `index.html?add=1&edit=${encodeURIComponent(modelId)}`
+    : 'index.html?add=1';
   const win = new WebviewWindow('add-model', {
-    title: '添加模型',
-    url: 'index.html?add=1',
+    title: modelId ? '编辑模型' : '添加模型',
+    url,
     width: 480,
     height: 660,
     resizable: false,
@@ -29,6 +33,7 @@ export default function DetailPanel() {
   const { 
     models, 
     stats, 
+    pollStatus,
     selectedModelId, 
     setSelectedModel,
     setEdgeState, 
@@ -67,7 +72,7 @@ export default function DetailPanel() {
         <h2 className="text-sm font-medium">TokenMeter</h2>
         <div className="flex gap-2">
           <button
-            onClick={openAddModelWindow}
+            onClick={() => openAddModelWindow()}
             className="px-2 py-1 text-xs bg-blue-600 hover:bg-blue-500 rounded"
           >
             + 添加
@@ -107,17 +112,33 @@ export default function DetailPanel() {
             >
               <div className="flex items-center justify-between">
                 <div className="font-medium text-sm">{model.name}</div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowConfirmDelete(model.id);
-                  }}
-                  className="text-xs text-gray-500 hover:text-red-400 no-drag"
-                >
-                  删除
-                </button>
+                <div className="flex items-center gap-1 no-drag">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      openAddModelWindow(model.id);
+                    }}
+                    className="text-xs text-gray-400 hover:text-blue-400 px-1"
+                  >
+                    编辑
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowConfirmDelete(model.id);
+                    }}
+                    className="text-xs text-gray-500 hover:text-red-400 no-drag"
+                  >
+                    删除
+                  </button>
+                </div>
               </div>
               <div className="text-xs text-gray-400 mt-1">{model.provider}</div>
+              {pollStatus[model.id] && !pollStatus[model.id].ok && (
+                <div className="text-[10px] text-red-400 truncate mt-0.5" title={pollStatus[model.id].error}>
+                  ⚠ 轮询失败：{pollStatus[model.id].error}
+                </div>
+              )}
               
               {/* 统计数据 */}
               {stats[model.id] && (
@@ -132,7 +153,7 @@ export default function DetailPanel() {
                   </div>
                   <div>
                     <div className="text-gray-500">费用</div>
-                    <div className="text-yellow-400">¥{stats[model.id].totalCost.toFixed(4)}</div>
+                    <div className="text-yellow-400">{formatMoney(stats[model.id].totalCost, model.currency)}</div>
                   </div>
                 </div>
               )}
@@ -169,6 +190,11 @@ export default function DetailPanel() {
       {selectedModel && currentStats && (
         <div className="p-4 border-t border-gray-700/50">
           <h3 className="text-sm font-medium mb-2">{selectedModel.name} - 今日统计</h3>
+          {pollStatus[selectedModel.id] && !pollStatus[selectedModel.id].ok && (
+            <div className="text-[11px] text-red-400 mb-2 truncate" title={pollStatus[selectedModel.id].error}>
+              ⚠ 最近轮询失败：{pollStatus[selectedModel.id].error}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 text-sm">
             <div className="bg-gray-800 rounded p-2">
               <div className="text-gray-400 text-xs">请求次数</div>
@@ -189,16 +215,10 @@ export default function DetailPanel() {
           </div>
           <div className="mt-2 bg-gray-800 rounded p-2 text-center">
             <div className="text-gray-400 text-xs">今日总费用</div>
-            <div className="text-2xl font-mono text-yellow-400">¥{currentStats.totalCost.toFixed(4)}</div>
+            <div className="text-2xl font-mono text-yellow-400">{formatMoney(currentStats.totalCost, selectedModel.currency)}</div>
           </div>
         </div>
       )}
     </div>
   );
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) return (tokens / 1000000).toFixed(1) + 'M';
-  if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'K';
-  return tokens.toString();
 }
