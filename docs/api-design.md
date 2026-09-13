@@ -1,107 +1,114 @@
-# TokenMeter 用量表 — 接口与协议
+# TokenMeter — Interfaces and Protocols
 
-TokenMeter 没有独立服务端，也不拦截其他程序的请求。本文覆盖两类接口：
-① 应用对大模型 API 的 HTTP 调用；② 前端（WebView）与 Rust 主进程之间的 Tauri IPC。
+**English** | [中文](api-design.ZH.md)
 
-## 1. 对大模型 API 的 HTTP 调用
+TokenMeter has no separate server and does not intercept other programs' requests. This document covers two kinds of
+interface: ① the HTTP calls the app makes to LLM APIs; ② the Tauri IPC between the frontend (WebView) and the Rust
+main process.
 
-| 项 | 说明 |
+## 1. HTTP calls to LLM APIs
+
+| Item | Description |
 |---|---|
-| 端点 | `ModelConfig.apiEndpoint`，即**完整**的 `…/chat/completions` 地址 |
-| 方法/体 | `POST`，请求体最小化以省 token（见下） |
-| 鉴权 | 同时带 `api-key: <key>` 与 `Authorization: Bearer <key>`，兼容各家网关 |
-| 超时 | 30s（全局复用的 `reqwest::Client`）；非 2xx 视为失败 |
-| 请求头 | `Content-Type: application/json` |
+| Endpoint | `ModelConfig.apiEndpoint`, i.e. the **full** `…/chat/completions` URL |
+| Method / body | `POST`, with a minimal request body to save tokens (see below) |
+| Auth | sends both `api-key: <key>` and `Authorization: Bearer <key>`, for compatibility with various gateways |
+| Timeout | 30s (a single globally reused `reqwest::Client`); anything other than 2xx counts as a failure |
+| Request headers | `Content-Type: application/json` |
 
-    // 定时轮询（poller.rs）
+    // scheduled poll (poller.rs)
     { "model": "<ModelConfig.provider>", "messages": [{ "role": "user", "content": "count tokens" }], "max_tokens": 10 }
-    // 测试连接（同一函数，仅文案与 max_tokens 不同）
+    // test connection (same function, different wording and max_tokens)
     { "model": "<ModelConfig.provider>", "messages": [{ "role": "user", "content": "hi" }], "max_tokens": 5 }
 
-**响应解析与费用**
+**Response parsing and cost**
 
-- 按 `responsePath` 的点路径取值（支持数组下标，如 `choices[0].usage.total_tokens`），默认即 OpenAI 兼容格式：
+- Values are read through the `responsePath` dot paths (array indexes are supported, e.g. `choices[0].usage.total_tokens`);
+  the defaults are already the OpenAI-compatible format:
 
       "responsePath": {
         "inputTokens":  "usage.prompt_tokens",
         "outputTokens": "usage.completion_tokens",
-        "totalTokens":  "usage.total_tokens"   // 缺失时回退为 input + output
+        "totalTokens":  "usage.total_tokens"   // falls back to input + output when missing
       }
 
-- 费用 = 输入 tokens ÷ 1000 × `inputPrice` + 输出 tokens ÷ 1000 × `outputPrice`（单价为"每 1K tokens"；`currency` 仅作展示单位）；
-- 解析不到 usage 时记 0 并继续，不中断轮询；三项全 0 会在日志中 warn（提示解析路径可能配错）。
+- Cost = input tokens ÷ 1000 × `inputPrice` + output tokens ÷ 1000 × `outputPrice` (prices are per 1K tokens; `currency` is a display unit only);
+- If usage cannot be parsed, the request records 0 and polling continues; when all three values are 0 a warning is written to the log
+  (a hint that the response path may be misconfigured).
 
-## 2. Tauri 命令（IPC）
+## 2. Tauri commands (IPC)
 
-全部在 `main.rs` 的 `invoke_handler` 注册、`commands.rs` 实现，参数/返回值 camelCase，
-状态经 `State<Arc<Mutex<AppState>>>` 访问。
+All of them are registered in `invoke_handler` in `main.rs` and implemented in `commands.rs`; arguments and return
+values are camelCase, and state is reached through `State<Arc<Mutex<AppState>>>`.
 
-**模型管理**
+**Model management**
 
-| 命令 | 参数 | 返回 | 说明 |
+| Command | Arguments | Returns | Description |
 |---|---|---|---|
-| `get_models` | — | `ModelConfig[]` | 内存中的模型列表 |
-| `add_model` | `model` | `ModelConfig[]` | 追加并写盘；ID 重复报"模型ID已存在" |
-| `update_model` | `model` | `ModelConfig[]` | 按 `id` 覆盖并写盘；不存在则报错 |
-| `delete_model` | `id` | `ModelConfig[]` | 移除模型并写盘 |
-| `test_connection` | `config` | `string` | 用**未保存**的配置发一次最小请求，返回"连接成功"或错误描述 |
+| `get_models` | — | `ModelConfig[]` | the model list held in memory |
+| `add_model` | `model` | `ModelConfig[]` | appends and writes to disk; a duplicate ID reports "model ID already exists" |
+| `update_model` | `model` | `ModelConfig[]` | overwrites by `id` and writes to disk; errors if it does not exist |
+| `delete_model` | `id` | `ModelConfig[]` | removes the model and writes to disk |
+| `test_connection` | `config` | `string` | sends one minimal request with the **unsaved** configuration and returns "connection succeeded" or an error description |
 
-**今日统计与轮询**
+**Today's stats and polling**
 
-| 命令 | 参数 | 返回 | 说明 |
+| Command | Arguments | Returns | Description |
 |---|---|---|---|
-| `get_daily_stats` | `modelId` | `DailyStats` | 该模型当天聚合 |
-| `get_all_daily_stats` | — | `Record<modelId, DailyStats>` | 所有模型当天聚合 |
-| `trigger_poll` | — | — | **手动轮询**：逐模型真实发请求，成功则入库并 `emit("usage-updated")` |
+| `get_daily_stats` | `modelId` | `DailyStats` | today's aggregate for that model |
+| `get_all_daily_stats` | — | `Record<modelId, DailyStats>` | today's aggregate for every model |
+| `trigger_poll` | — | — | **manual poll**: sends a real request per model, stores successful ones and emits `usage-updated` |
 
-> `DailyStats = { inputTokens, outputTokens, totalTokens, requestCount, totalCost }`；统计口径只有"今日"（本地时区零点起）。
+> `DailyStats = { inputTokens, outputTokens, totalTokens, requestCount, totalCost }`; the only statistical window is
+> "today" (since midnight in the local timezone).
 
-**历史查询与导出**
+**History and export**
 
-| 命令 | 参数 | 返回 | 说明 |
+| Command | Arguments | Returns | Description |
 |---|---|---|---|
-| `query_usage_detail` | `params: { dimension, filter?, date }` | `DailyDetail` | `dimension` = `api` / `model` / `total`；`date` 为 `YYYY-MM-DD` |
-| `get_daily_costs` | `dimension, filter?, days` | `DailyCost[]` | 近 N 天费用趋势（历史页图表） |
-| `get_api_key_list` | — | `{ apiKeyMask, provider }[]` | 供"按 Key"筛选 |
-| `get_daily_records` | `dimension, filter?, date, showIgnored` | `RecordItem[]` | 某日请求记录明细 |
-| `ignore_record` / `unignore_record` | `recordId` | — | 标记/取消标记，不计入统计 |
-| `get_cleanup_stats` | — | `CleanupStats` | 超出保留期（默认 3 个月）的数据统计 |
-| `export_month_csv` | `year, month` | `string` | 导出该月 CSV，返回文件路径 |
-| `cleanup_old_data` | — | `number` | 删除保留期前的记录，返回删除条数 |
+| `query_usage_detail` | `params: { dimension, filter?, date }` | `DailyDetail` | `dimension` = `api` / `model` / `total`; `date` is `YYYY-MM-DD` |
+| `get_daily_costs` | `dimension, filter?, days` | `DailyCost[]` | cost trend over the last N days (history chart) |
+| `get_api_key_list` | — | `{ apiKeyMask, provider }[]` | feeds the "by key" filter |
+| `get_daily_records` | `dimension, filter?, date, showIgnored` | `RecordItem[]` | request records for a given day |
+| `ignore_record` / `unignore_record` | `recordId` | — | mark or unmark a record so it is excluded from the statistics |
+| `get_cleanup_stats` | — | `CleanupStats` | counts of data older than the retention period (3 months by default) |
+| `export_month_csv` | `year, month` | `string` | exports that month to CSV and returns the file path |
+| `cleanup_old_data` | — | `number` | deletes records older than the retention period and returns the number deleted |
 
-**日志与自启动**
+**Logs and autostart**
 
-| 命令 | 参数 | 返回 | 说明 |
+| Command | Arguments | Returns | Description |
 |---|---|---|---|
-| `get_recent_logs` | `limit` | `DebugLog[]` | 最近日志 |
-| `get_logs_by_level` | `level, limit` | `DebugLog[]` | 按级别筛选 |
-| `get_log_stats` | — | `LogStats` | 各级别条数统计 |
-| `is_autostart_enabled` | — | `bool` | 注册表项是否存在 |
-| `enable_autostart` / `disable_autostart` | — | — | 写/删 `HKCU\…\CurrentVersion\Run\TokenMeter` |
+| `get_recent_logs` | `limit` | `DebugLog[]` | most recent logs |
+| `get_logs_by_level` | `level, limit` | `DebugLog[]` | filters by level |
+| `get_log_stats` | — | `LogStats` | entry counts per level |
+| `is_autostart_enabled` | — | `bool` | whether the registry value exists |
+| `enable_autostart` / `disable_autostart` | — | — | write / delete `HKCU\…\CurrentVersion\Run\TokenMeter` |
 
-## 3. 事件
+## 3. Events
 
-| 事件 | 触发方 | payload | 前端行为 |
+| Event | Emitted by | payload | Frontend behaviour |
 |---|---|---|---|
-| `usage-updated` | `poller.rs` 每轮成功入库后；`trigger_poll` 结束 | — | 刷新今日统计 |
-| `poll-status` | `poller.rs` / `commands.rs`（**状态变化**时） | `{ id, name, ok, error? }` | 更新 `pollStatus`，概览/详情展示失败原因 |
-| `models-changed` | 添加/编辑子窗口保存后 | — | 主窗口重新拉模型 + 统计 |
-| `add-model-window-closed` | 子窗口关闭前（保存/取消/Esc/卸载兜底） | — | 主窗口解除"保持展开"锁定 |
+| `usage-updated` | `poller.rs` after each successful poll; when `trigger_poll` finishes | — | refresh today's stats |
+| `poll-status` | `poller.rs` / `commands.rs` (on **state changes**) | `{ id, name, ok, error? }` | update `pollStatus`; the overview and details show the failure reason |
+| `models-changed` | after the add/edit child window saves | — | the main window re-fetches models + stats |
+| `add-model-window-closed` | before the child window closes (save / cancel / Esc / unload fallback) | — | the main window releases its "stay expanded" lock |
 
-## 4. 配置文件（`config.json` / `config.example.json`）
+## 4. Configuration file (`config.json` / `config.example.json`)
 
-路径：**工作目录存在则用之，否则用 exe 所在目录**（启动时解析一次，此后读写共用）。UTF-8 JSON，字段 camelCase：
+Path: the **working directory if it contains one, otherwise the directory of the exe** (resolved once at startup and
+then shared by every read and write). UTF-8 JSON, camelCase fields:
 
     {
       "models": [
         {
-          "id": "model-example",                 // 前端生成：model-<时间戳>-<随机串>
-          "name": "示例模型",
-          "provider": "deepseek-chat",           // 请求体里的 model 字段
+          "id": "model-example",                 // generated by the frontend: model-<timestamp>-<random string>
+          "name": "Example model",
+          "provider": "deepseek-chat",           // the model field of the request body
           "apiEndpoint": "https://api.deepseek.com/v1/chat/completions",
-          "apiKey": "请填入你的 API Key",
-          "inputPrice": 0.001,                   // 每 1K 输入 tokens
-          "outputPrice": 0.002,                  // 每 1K 输出 tokens
+          "apiKey": "put your API key here",
+          "inputPrice": 0.001,                   // per 1K input tokens
+          "outputPrice": 0.002,                  // per 1K output tokens
           "currency": "CNY",
           "responsePath": {
             "inputTokens": "usage.prompt_tokens",
@@ -110,25 +117,29 @@ TokenMeter 没有独立服务端，也不拦截其他程序的请求。本文覆
           }
         }
       ],
-      "pollingInterval": 600000                  // 毫秒，默认 10 分钟
+      "pollingInterval": 600000                  // milliseconds, 10 minutes by default
     }
 
-内置模板（`src/types.ts` `MODEL_TEMPLATES`）：DeepSeek `deepseek-chat`（CNY 0.001/0.002）、
-MiMo `mimo-v2.5-pro`（`token-plan-cn.xiaomimimo.com` 端点，价格填 0——按订阅计费，只统计 token）、
-ChatGPT `gpt-4o`（USD 0.005/0.015）。
+Built-in templates (`MODEL_TEMPLATES` in `src/types.ts`): DeepSeek `deepseek-chat` (CNY 0.001/0.002),
+MiMo `mimo-v2.5-pro` (endpoint `token-plan-cn.xiaomimimo.com`, price 0 — billed as a subscription, so only tokens are
+counted), ChatGPT `gpt-4o` (USD 0.005/0.015).
 
-## 5. 存储与统计口径
+## 5. Storage and statistical scope
 
-- SQLite 文件与配置同目录：`usage_data.db`
-  - `usage_records`：id、model_id、provider、api_key_mask、timestamp、input/output/total_tokens、cost、ignored
-  - `debug_logs`：id、timestamp、level、module、message、detail、user_id
-- "今日"= 本地时区当天（`chrono::Local`）；统计一律排除 `ignored = 1` 的记录（金额只作估算，按模型币种展示）；
-- 默认保留 3 个月，启动时若发现更早的数据会弹窗询问"导出 CSV / 清理"。
+- The SQLite file lives next to the configuration: `usage_data.db`
+  - `usage_records`: id, model_id, provider, api_key_mask, timestamp, input/output/total_tokens, cost, ignored
+  - `debug_logs`: id, timestamp, level, module, message, detail, user_id
+- "Today" means the local-timezone day (`chrono::Local`); all statistics exclude rows with `ignored = 1`
+  (amounts are estimates, displayed in the model's currency);
+- The default retention period is 3 months; on startup, if older data is found, a dialog asks whether to export a CSV
+  or clean up.
 
-## 6. 约定与错误处理
+## 6. Conventions and error handling
 
-- 命令失败返回 `Result::Err(String)`，前端 catch 后直接展示文案（如表单的"测试连接"结果区）；
-- 单个模型轮询失败不影响其他模型与下一轮；失败→恢复的状态变化通过 `poll-status` 通知界面；
-- 命令名 snake_case（Tauri 默认），事件名 kebab-case。
+- A failed command returns `Result::Err(String)`, and the frontend displays the text directly after catching it
+  (for example in the "test connection" result area of the form);
+- A failure for one model does not affect the other models or the next round; the transition from failure back to
+  success is reported to the UI through `poll-status`;
+- Command names are snake_case (the Tauri default), event names are kebab-case.
 
-窗口与拖拽细节见 [architecture.md](architecture.md)，构建与排障见 [quick-start.md](quick-start.md)。
+Window and drag details are in [architecture.md](architecture.md); build and troubleshooting are in [quick-start.md](quick-start.md).

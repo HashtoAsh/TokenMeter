@@ -1,117 +1,118 @@
-# TokenMeter 用量表 — 快速上手（Windows）
+# TokenMeter — Quick Start (Windows)
 
-## 1. 环境要求
+**English** | [中文](quick-start.ZH.md)
 
-| 组件 | 说明 |
+## 1. Requirements
+
+| Component | Notes |
 |---|---|
 | Rust | stable + MSVC toolchain |
-| Node.js | **≥ 22.2**（`package.json` engines 约束；`tools/gen-icon.mjs` 用到 `zlib.crc32`） |
-| pnpm | 包管理 |
-| WebView2 Runtime | Windows 10 1803+ 通常已内置 |
-| Visual C++ Build Tools | Rust MSVC 链接所需 |
+| Node.js | **≥ 22.2** (`package.json` engines constraint; `tools/gen-icon.mjs` uses `zlib.crc32`) |
+| pnpm | package manager |
+| WebView2 Runtime | Usually already bundled with Windows 10 1803+ |
+| Visual C++ Build Tools | Required for linking with Rust MSVC |
 
-仅支持 Windows，无需 macOS/Linux 工具链。
+Windows only; no macOS/Linux toolchain is needed.
 
-## 2. 开发
+## 2. Development
 
     pnpm install
-    pnpm tauri dev      # 起 Vite(1420) + debug 后端；debug 模式加载 http://localhost:1420
+    pnpm tauri dev      # starts Vite(1420) + debug backend; debug mode loads http://localhost:1420
 
-## 3. 构建与打包
+## 3. Build and package
 
-    pnpm build                                     # 只出前端：tsc && vite build → dist/
-    node tools/test-window-geometry.cjs            # 贴边/展开几何回归测试（22 项断言，无需 Tauri）
+    pnpm build                                     # frontend only: tsc && vite build → dist/
+    node tools/test-window-geometry.cjs            # edge-docking/expand geometry regression test (22 assertions, no Tauri needed)
 
-    # 便携版（必须带 feature，否则内嵌不进前端、运行白屏）
+    # portable build (the feature is mandatory, otherwise the frontend is not embedded and the app shows a blank screen at runtime)
     cd src-tauri
     cargo build --release --features custom-protocol
 
-    # 安装包（NSIS）
+    # installer (NSIS)
     pnpm tauri build --features custom-protocol
 
-| 产物 | 路径 |
+| Artifact | Path |
 |---|---|
-| 便携版 exe | `src-tauri\target\release\TokenMeter.exe` |
-| 安装包 | `src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe` |
-| 发布目录（手工整理） | `output/TokenMeter_0.1.0_x64-setup.exe`、`output/portable/TokenMeter.exe` |
+| Portable exe | `src-tauri\target\release\TokenMeter.exe` |
+| Installer | `src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe` |
+| Release directory (assembled by hand) | `output/TokenMeter_0.1.0_x64-setup.exe`, `output/portable/TokenMeter.exe` |
 
-注意：
+Notes:
 
-- `--features custom-protocol` 决定是否内嵌 `dist`，打包与"独立跑 exe"都必须带；
-- `beforeBuildCommand` 会先执行 `pnpm build`；若本机 pnpm 包装器不认脚本里的 `&&`，
-  可先单独跑 `tsc --noEmit` 与 `vite build`，再把该命令临时改成 `cmd /c exit 0`（**打完记得改回**）；
-- 网络受限（cargo 拉不到依赖）时用一键脚本：
-  `powershell -ExecutionPolicy Bypass -File tools\build.ps1` —— 先试普通 `cargo fetch`，失败自动起
-  `tools/registry-proxy.mjs` 本地镜像代理再构建，并保证环境变量与临时文件复原。
+- `--features custom-protocol` determines whether `dist` is embedded; it is required both for packaging and for "running the exe standalone";
+- `beforeBuildCommand` runs `pnpm build` first; if the local pnpm wrapper does not understand the `&&` in the script,
+  you can run `tsc --noEmit` and `vite build` separately first, then temporarily change that command to `cmd /c exit 0` (**remember to change it back after packaging**);
+- When the network is restricted (cargo cannot fetch dependencies), use the one-shot script:
+  `powershell -ExecutionPolicy Bypass -File tools\build.ps1` — it first tries a plain `cargo fetch`, and on failure automatically starts the local
+  `tools/registry-proxy.mjs` mirror proxy before building, and guarantees that environment variables and temporary files are restored.
 
-## 4. 打包产物与实测验证（2026-09-13）
+## 4. Packaged artifacts and measured verification (2026-09-13)
 
-| 文件 | 大小 |
+| File | Size |
 |---|---|
 | `output/TokenMeter_0.1.0_x64-setup.exe` | 3.5 MB |
 | `output/portable/TokenMeter.exe` | 11.2 MB |
 
-直接运行便携版实测的窗口矩形（Win32 枚举 + 鼠标模拟）：
+Window rectangles measured on the real build by running the portable build directly (Win32 enumeration + mouse simulation):
 
-| 操作 | 实测 | 期望 |
+| Operation | Measured | Expected |
 |---|---|---|
-| 启动 | 22×130 贴右边（x=2538） | docked 贴边 |
-| 首次鼠标移入 | 320×400（右缘仍 2560） | 以贴边为锚向内展开 |
-| 点击 | 400×640，稳定不抖 | expanded |
-| 点"+ 添加" | 新增 500×690 子窗口，位于主窗左侧 12px | 子窗口不叠在、不被主窗盖住 |
+| Launch | 22×130 docked to the right edge (x=2538) | docked to the screen edge |
+| First mouse entry | 320×400 (right edge still 2560) | expands inward anchored on the docked edge |
+| Click | 400×640, stable, no jitter | expanded |
+| Click "+ Add" | new 500×690 child window, 12px to the left of the main window | child window does not stack on or get covered by the main window |
 
-添加窗口抓图逐像素扫描：只有 10px 透明留白 + 480px 圆角面板，**无 `127,127,127` 灰带**
-（旧版此处是 48px/33px 纯灰带，即"大窗套小窗"）。取证图存于 `.local/before-add-window.png` / `after-add-window.png`。
+Pixel-by-pixel scan of an Add-window screenshot: only a 10px transparent margin + a 480px rounded panel, **no `127,127,127` gray band**
+(the old version had a solid 48px/33px gray band here, i.e. "a big window framing a small window"). The evidence images are stored at `.local/before-add-window.png` / `after-add-window.png`.
 
-## 5. 使用说明
+## 5. Usage
 
-    docked 贴边竖条 (22×130) ──鼠标移入──▶ hovering 概览 (320×400)
-       ▲                                        │ 点击
-       │            收起（移出 260ms 或点"收起"）  ▼
-       └────────────────────────────── expanded 详情 (400×640)
+    docked edge-docked vertical bar (22×130) ──mouse enters──▶ hovering overview (320×400)
+       ▲                                                     │ click
+       │  collapse (leave for 260ms or click "Collapse")  ▼
+       └──────────────────────────────────────────────── expanded detail (400×640)
 
-- **拖动**：按住窗口任意处拖动；松手时距屏幕左/右边缘 <32px 自动吸附贴边收起，否则停在原地（不会被强行吸回）。
-- **托盘**：显示主窗口 / 隐藏主窗口 / 退出。
-- **单实例**：重复启动只会把已有窗口唤到前台；要重启请先从托盘退出。
-- **模型管理**：详情面板 **+ 添加 / 编辑** 打开独立窗口 —— 选模板或手填（名称、模型 ID、完整
-  `…/chat/completions` 地址、API Key、每 1K tokens 输入/输出单价、币种、响应解析路径），
-  **测试连接** 通过后保存；保存会自动关闭子窗口并刷新主窗口。子窗口可拖动标题栏、✕ 或 Esc 关闭。
-- **统计**：详情面板 **↻ 轮询** 手动触发一次全模型轮询（真实请求、会计费）；
-  今日页显示选中模型的请求次数、输入/输出/总 tokens 与费用；历史页可按 Key/模型/总计查某日明细、
-  看近 7 天费用趋势、导出月度 CSV、忽略异常记录。
-- **数据保留**：默认 3 个月，启动时若发现更早的数据会询问导出 CSV 或直接清理。
-- **开机自启动**：设置页开关，写入 `HKCU\…\CurrentVersion\Run`。
+- **Drag**: hold and drag anywhere on the window; on release, if the pointer is within <32px of the left/right screen edge it automatically snaps to the edge and collapses, otherwise it stays where it is (it will not be forcibly pulled back).
+- **Tray**: Show main window / Hide main window / Quit.
+- **Single instance**: launching again only brings the existing window to the foreground; to restart, quit from the tray first.
+- **Model management**: the detail panel's **+ Add / Edit** opens a separate window — choose a template or fill in the fields by hand (name, model ID, full
+  `…/chat/completions` URL, API Key, input/output unit price per 1K tokens, currency, response path), then **Test connection**; save once it passes; saving automatically closes the child window and refreshes the main window. The child window can be dragged by its title bar and closed with ✕ or Esc.
+- **Stats**: the detail panel's **↻ Poll** manually triggers one polling pass over all models (real requests, billed);
+  the Today tab shows the request count, input/output/total tokens and cost for the selected model; the History tab lets you query a day's details by Key/model/total,
+  view the 7-day cost trend, export a monthly CSV, and ignore abnormal records.
+- **Data retention**: 3 months by default; at startup, if older data is found, it asks whether to export a CSV or clean it up directly.
+- **Launch at startup (autostart)**: a toggle in the Settings tab, written to `HKCU\…\CurrentVersion\Run`.
 
-## 6. 配置文件
+## 6. Configuration file
 
-运行时在**工作目录**（存在则优先）或 **exe 所在目录**读写 `config.json`，首次启动自动生成默认值：
+At runtime, `config.json` is read from and written to the **working directory** (used first if it exists) or the **directory containing the exe**; default values are generated automatically on first launch:
 
-    { "models": [ /* 见 config.example.json */ ], "pollingInterval": 600000 }
+    { "models": [ /* see config.example.json */ ], "pollingInterval": 600000 }
 
-- 模型/间隔的修改即时写回；配置损坏（JSON 解析失败）先备份为 `config.json.bak.<时间戳>` 再重置，不静默清空；
-- 用量数据存同目录的 SQLite 文件 `usage_data.db`（用量记录 + 调试日志）；
-- 字段含义见 [api-design.md](api-design.md)。
+- Model/interval changes are written back immediately; if the config is corrupt (JSON parse failure), it is first backed up as `config.json.bak.<timestamp>` and then reset, never silently cleared;
+- Usage data is stored in the SQLite file `usage_data.db` in the same directory (usage records + debug logs);
+- For field meanings, see [api-design.md](api-design.md).
 
-## 7. 常见问题
+## 7. FAQ
 
-**Q1 运行白屏？** 构建时漏了 `--features custom-protocol`（前端未内嵌）。
-debug 模式则会去加载 `http://localhost:1420`，需保持 `pnpm dev` 在跑。
+**Q1 Blank screen at runtime?** The build was missing `--features custom-protocol` (the frontend was not embedded).
+In debug mode it instead tries to load `http://localhost:1420`, so `pnpm dev` must be kept running.
 
-**Q2 启动即退出、日志报 WebView2 `0x800700AA`（资源在使用中）？**
-删除 WebView2 profile 缓存 `%LOCALAPPDATA%\com.tokenmeter.app` 后重启。
+**Q2 The app exits immediately on launch and the log reports WebView2 `0x800700AA` (resource in use)?**
+Delete the WebView2 profile cache `%LOCALAPPDATA%\com.tokenmeter.app` and restart.
 
-**Q3 双击图标没反应？** 单实例设计：只会唤起已有窗口。窗口被隐藏时用托盘"显示主窗口"。
+**Q3 Double-clicking the icon does nothing?** Single-instance design: it only brings the existing window to the front. When the window is hidden, use "Show main window" from the tray.
 
-**Q4 贴边条找不到了？** 它只会贴在屏幕左/右边缘；把它拖到屏幕中间会恢复为正常悬浮尺寸（不会卡成小条）。
+**Q4 Can't find the edge-docked bar?** It only docks to the left/right screen edge; dragging it to the middle of the screen restores it to the normal floating size (it will not get stuck as a small bar).
 
-**Q5 费用对不上账号账单？** 统计口径只含 TokenMeter 自身的轮询请求，见 [README](../README.md) 的统计口径说明。
+**Q5 The cost does not match your account bill?** The statistics scope only covers TokenMeter's own polling requests; see the statistics-scope note in [README](../README.md).
 
-**Q6 重新生成图标？** `node tools\gen-icon.mjs`（输出到脚本目录，需 Node ≥ 22.2）→
-`pnpm tauri icon <源图路径>` 生成 `src-tauri/icons/` 全套。
+**Q6 Regenerate the icon?** `node tools\gen-icon.mjs` (outputs to the script directory, requires Node ≥ 22.2) →
+`pnpm tauri icon <source image path>` generates the full set in `src-tauri/icons/`.
 
-## 8. 相关文档
+## 8. Related documents
 
-- [../README.md](../README.md)：总览、特性、配置
-- [architecture.md](architecture.md)：架构、窗口状态机、存储
-- [api-design.md](api-design.md)：命令、事件、config schema
-- [tech-stack.md](tech-stack.md)：依赖与技术选型
+- [../README.md](../README.md): overview, features, configuration
+- [architecture.md](architecture.md): architecture, window state machine, storage
+- [api-design.md](api-design.md): commands, events, config schema
+- [tech-stack.md](tech-stack.md): dependencies and technology choices
