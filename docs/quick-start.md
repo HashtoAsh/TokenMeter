@@ -1,119 +1,117 @@
 # TokenMeter 用量表 — 快速上手（Windows）
 
-> 本文面向开发者与终端用户。终端用户直接运行发布版安装包即可；开发者参考第 3 节构建。
-
-## 1. 安装包
-
-正式安装包由 NSIS 打包（构建后产物）：
-
-```
-src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe
-```
-
-## 2. 环境要求（Windows）
+## 1. 环境要求
 
 | 组件 | 说明 |
 |---|---|
-| Rust | stable，MSVC toolchain（`rustup toolchain install stable-x86_64-pc-windows-msvc`） |
-| Node.js | **≥ 22.2**（`package.json` engines 约束），并安装 pnpm |
+| Rust | stable + MSVC toolchain |
+| Node.js | **≥ 22.2**（`package.json` engines 约束；`tools/gen-icon.mjs` 用到 `zlib.crc32`） |
+| pnpm | 包管理 |
 | WebView2 Runtime | Windows 10 1803+ 通常已内置 |
 | Visual C++ Build Tools | Rust MSVC 链接所需 |
 
-仅 Windows 平台，无需 macOS/Linux 工具链。
+仅支持 Windows，无需 macOS/Linux 工具链。
 
-## 3. 构建与运行
+## 2. 开发
 
-### 3.1 依赖
+    pnpm install
+    pnpm tauri dev      # 起 Vite(1420) + debug 后端；debug 模式加载 http://localhost:1420
 
-```powershell
-pnpm install          # 前端依赖；Rust 依赖由 cargo 构建时自动拉取
-```
+## 3. 构建与打包
 
-### 3.2 本地开发（前端热更新）
+    pnpm build                                     # 只出前端：tsc && vite build → dist/
+    node tools/test-window-geometry.cjs            # 贴边/展开几何回归测试（22 项断言，无需 Tauri）
 
-```powershell
-pnpm tauri dev
-```
+    # 便携版（必须带 feature，否则内嵌不进前端、运行白屏）
+    cd src-tauri
+    cargo build --release --features custom-protocol
 
-等价于：`pnpm dev` 起 Vite（端口 1420），再在 `src-tauri` 下 debug 构建运行——debug 模式加载 `http://localhost:1420`。
+    # 安装包（NSIS）
+    pnpm tauri build --features custom-protocol
 
-### 3.3 前端构建与独立 exe
+| 产物 | 路径 |
+|---|---|
+| 便携版 exe | `src-tauri\target\release\TokenMeter.exe` |
+| 安装包 | `src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe` |
+| 发布目录（手工整理） | `output/TokenMeter_0.1.0_x64-setup.exe`、`output/portable/TokenMeter.exe` |
 
-```powershell
-pnpm build                          # tsc && vite build → dist/
-# 独立运行后端 exe 需内嵌 dist：
-#   （进入 src-tauri/）cargo build --features custom-protocol
-# 否则 debug exe 会去加载 http://localhost:1420 而白屏
-```
+注意：
 
-### 3.4 正式打包
+- `--features custom-protocol` 决定是否内嵌 `dist`，打包与"独立跑 exe"都必须带；
+- `beforeBuildCommand` 会先执行 `pnpm build`；若本机 pnpm 包装器不认脚本里的 `&&`，
+  可先单独跑 `tsc --noEmit` 与 `vite build`，再把该命令临时改成 `cmd /c exit 0`（**打完记得改回**）；
+- 网络受限（cargo 拉不到依赖）时用一键脚本：
+  `powershell -ExecutionPolicy Bypass -File tools\build.ps1` —— 先试普通 `cargo fetch`，失败自动起
+  `tools/registry-proxy.mjs` 本地镜像代理再构建，并保证环境变量与临时文件复原。
 
-```powershell
-pnpm tauri build --features custom-protocol   # beforeBuildCommand 会先执行 pnpm build
-```
+## 4. 打包产物与实测验证（2026-09-13）
 
-产物：`src-tauri\target\release\bundle\nsis\TokenMeter_0.1.0_x64-setup.exe`。
+| 文件 | 大小 |
+|---|---|
+| `output/TokenMeter_0.1.0_x64-setup.exe` | 3.5 MB |
+| `output/portable/TokenMeter.exe` | 11.2 MB |
 
-> 必须带 `--features custom-protocol`（内嵌前端 dist）；缺失会导致安装版白屏。
+直接运行便携版实测的窗口矩形（Win32 枚举 + 鼠标模拟）：
 
-### 3.5 受限网络环境
+| 操作 | 实测 | 期望 |
+|---|---|---|
+| 启动 | 22×130 贴右边（x=2538） | docked 贴边 |
+| 首次鼠标移入 | 320×400（右缘仍 2560） | 以贴边为锚向内展开 |
+| 点击 | 400×640，稳定不抖 | expanded |
+| 点"+ 添加" | 新增 500×690 子窗口，位于主窗左侧 12px | 子窗口不叠在、不被主窗盖住 |
 
-若本机 cargo 下载依赖失败（如 TLS 后端异常），可使用一键脚本
-`powershell -ExecutionPolicy Bypass -File tools\build.ps1`：
-先试普通 `cargo fetch`，失败则自动启动 `tools/registry-proxy.mjs` 本地镜像代理完成下载，
-并最终以 `cargo build --features custom-protocol` 构建。细节见该脚本头部注释。
+添加窗口抓图逐像素扫描：只有 10px 透明留白 + 480px 圆角面板，**无 `127,127,127` 灰带**
+（旧版此处是 48px/33px 纯灰带，即"大窗套小窗"）。取证图存于 `.local/before-add-window.png` / `after-add-window.png`。
 
-## 4. 使用说明
+## 5. 使用说明
 
-- **系统托盘**：右键图标 → 显示主窗口 / 隐藏主窗口 / 退出。
-- **悬浮窗三态交互**：
+    docked 贴边竖条 (22×130) ──鼠标移入──▶ hovering 概览 (320×400)
+       ▲                                        │ 点击
+       │            收起（移出 260ms 或点"收起"）  ▼
+       └────────────────────────────── expanded 详情 (400×640)
 
-```
-docked 贴边竖条 (22×130) ──鼠标移入──▶ hovering 概览 (320×400)
-   ▲                                       │ 点击
-   │               收起 ◀───────────────────▼
-   └────────────── expanded 详情面板 (400×640)
-```
+- **拖动**：按住窗口任意处拖动；松手时距屏幕左/右边缘 <32px 自动吸附贴边收起，否则停在原地（不会被强行吸回）。
+- **托盘**：显示主窗口 / 隐藏主窗口 / 退出。
+- **单实例**：重复启动只会把已有窗口唤到前台；要重启请先从托盘退出。
+- **模型管理**：详情面板 **+ 添加 / 编辑** 打开独立窗口 —— 选模板或手填（名称、模型 ID、完整
+  `…/chat/completions` 地址、API Key、每 1K tokens 输入/输出单价、币种、响应解析路径），
+  **测试连接** 通过后保存；保存会自动关闭子窗口并刷新主窗口。子窗口可拖动标题栏、✕ 或 Esc 关闭。
+- **统计**：详情面板 **↻ 轮询** 手动触发一次全模型轮询（真实请求、会计费）；
+  今日页显示选中模型的请求次数、输入/输出/总 tokens 与费用；历史页可按 Key/模型/总计查某日明细、
+  看近 7 天费用趋势、导出月度 CSV、忽略异常记录。
+- **数据保留**：默认 3 个月，启动时若发现更早的数据会询问导出 CSV 或直接清理。
+- **开机自启动**：设置页开关，写入 `HKCU\…\CurrentVersion\Run`。
 
-  - 竖条/面板整块按住可拖动；松手时窗口贴近屏幕任一边缘(<32px)自动**吸附贴边**并收起。
-  - 展开时贴右缘会自动向左生长，避免超出屏幕。
-- **查看统计**：详情面板 **↻ 轮询** 手动触发一次全模型轮询（真实发请求）；下方为选中模型今日统计
-  （请求次数、输入/输出/总 Tokens、今日总费用，金额按模型币种显示）。
-  轮询失败会在概览与详情中显示原因提示。
-- **模型管理**：详情面板 **+ 添加 / 编辑** 打开独立窗口：
-  - 快速选择模板：DeepSeek（`deepseek-chat`）、MiMo（`mimo-v2.5-pro`，Token Plan 中国区端点，
-    价格填 0——按订阅计费只统计 token）、ChatGPT（`gpt-4o`）；
-  - 表单字段：名称、模型ID（即请求体 `model`）、完整 chat/completions URL、API Key、
-    输入/输出单价（每 1K tokens）、币种、高级设置里的响应解析路径；
-  - “测试连接”验证后再保存；保存自动关闭窗口并通知主窗口刷新。
-- **轮询机制**：后台每 10 分钟（`pollingInterval`，默认 600000ms）向各模型发一次最小请求读取用量；
-  当日用量仅存内存、次日自动清零。
+## 6. 配置文件
 
-## 5. 配置文件
+运行时在**工作目录**（存在则优先）或 **exe 所在目录**读写 `config.json`，首次启动自动生成默认值：
 
-运行时在**工作目录**（开发）或 **exe 所在目录**（安装版）读写 `config.json`
-（首次启动自动创建默认值：`pollingInterval: 600000`、`models: []`）。
+    { "models": [ /* 见 config.example.json */ ], "pollingInterval": 600000 }
 
-- 模型配置与轮询间隔的修改即时写回；
-- 配置损坏（JSON 解析失败）时会先备份为 `config.json.bak.<时间戳>` 再重置，不静默清空；
-- 配置字段说明见 [api-design.md](api-design.md)；模板见仓库根 `config.example.json`（复制为 `config.json` 填写即可）。
+- 模型/间隔的修改即时写回；配置损坏（JSON 解析失败）先备份为 `config.json.bak.<时间戳>` 再重置，不静默清空；
+- 用量数据存同目录的 SQLite 文件 `usage_data.db`（用量记录 + 调试日志）；
+- 字段含义见 [api-design.md](api-design.md)。
 
-## 6. 常见问题
+## 7. 常见问题
 
-**Q1：debug 构建白屏？**
-debug 模式默认加载 `http://localhost:1420`：要么保持 `pnpm dev` 运行，要么用
-`cargo build --features custom-protocol` 构建内嵌前端的 exe。
+**Q1 运行白屏？** 构建时漏了 `--features custom-protocol`（前端未内嵌）。
+debug 模式则会去加载 `http://localhost:1420`，需保持 `pnpm dev` 在跑。
 
-**Q2：应用启动即退出，WebView2 报“资源在使用中 / 0x800700AA”？**
-删除 WebView2 profile 缓存目录后重启：`%LOCALAPPDATA%\com.tokenmeter.app`。
+**Q2 启动即退出、日志报 WebView2 `0x800700AA`（资源在使用中）？**
+删除 WebView2 profile 缓存 `%LOCALAPPDATA%\com.tokenmeter.app` 后重启。
 
-**Q3：如何重生成图标？**
-`node tools\gen-icon.mjs` 生成源图（输出到脚本所在目录），再执行
-`pnpm tauri icon <源图路径>` 重生成 `src-tauri/icons/` 全套。
+**Q3 双击图标没反应？** 单实例设计：只会唤起已有窗口。窗口被隐藏时用托盘"显示主窗口"。
 
-## 7. 相关文档
+**Q4 贴边条找不到了？** 它只会贴在屏幕左/右边缘；把它拖到屏幕中间会恢复为正常悬浮尺寸（不会卡成小条）。
 
-- [README.md](../README.md)：总览与配置
-- [architecture.md](architecture.md)：整体架构、模块划分与数据流
-- [api-design.md](api-design.md)：Tauri 命令、事件与 config schema
+**Q5 费用对不上账号账单？** 统计口径只含 TokenMeter 自身的轮询请求，见 [README](../README.md) 的统计口径说明。
+
+**Q6 重新生成图标？** `node tools\gen-icon.mjs`（输出到脚本目录，需 Node ≥ 22.2）→
+`pnpm tauri icon <源图路径>` 生成 `src-tauri/icons/` 全套。
+
+## 8. 相关文档
+
+- [../README.md](../README.md)：总览、特性、配置
+- [architecture.md](architecture.md)：架构、窗口状态机、存储
+- [api-design.md](api-design.md)：命令、事件、config schema
 - [tech-stack.md](tech-stack.md)：依赖与技术选型

@@ -1,8 +1,19 @@
 use crate::models::*;
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 use tauri::Manager;
+
+/// 复用同一个 HTTP 客户端：保持连接池与 TLS 会话，避免每次请求重建（P3-4）
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
 
 /// 拆分形如 `choices[0]` / `choices` 的路径段：返回 (键名, 数组下标)
 fn split_segment(seg: &str) -> (&str, Option<usize>) {
@@ -53,16 +64,21 @@ pub fn today_start_local() -> i64 {
 }
 
 /// 追加一条用量记录，并只保留“今天（本地时区）”的数据
-pub fn append_and_prune(state: &mut AppState, model_id: &str, record: UsageRecord) {
-    let records = state.usage_data.entry(model_id.to_string()).or_default();
-    records.push(record);
-    let start = today_start_local();
-    records.retain(|r| r.timestamp >= start);
+pub fn append_to_storage(state: &AppState, model: &ModelConfig, record: UsageRecord) {
+    if let Err(e) = state.storage.insert_record(
+        &model.id,
+        &model.provider,
+        &model.api_key,
+        &record,
+    ) {
+        log::error!("保存用量记录失败: {}", e);
+        let _ = state.storage.log_error("poller", "保存用量记录失败", &e);
+    }
 }
 
 /// 发送一条 chat 请求并校验状态码（test / poll 共用核心，P2-4）
 async fn send_chat_request(config: &ModelConfig, content: &str, max_tokens: u32) -> Result<reqwest::Response, String> {
-    let client = reqwest::Client::new();
+    let client = http_client();
 
     let body = serde_json::json!({
         "model": config.provider,
@@ -70,22 +86,55 @@ async fn send_chat_request(config: &ModelConfig, content: &str, max_tokens: u32)
         "max_tokens": max_tokens
     });
 
+    log::debug!("发送请求到: {} (模型: {})", config.api_endpoint, config.name);
+    
     let response = client
         .post(&config.api_endpoint)
         .header("api-key", &config.api_key)
         .header("Authorization", format!("Bearer {}", config.api_key))
         .header("Content-Type", "application/json")
         .json(&body)
-        .timeout(Duration::from_secs(30))
         .send()
         .await
-        .map_err(|e| format!("网络错误: {}", e))?;
+        .map_err(|e| {
+            let error_msg = format!("网络错误: {}", e);
+            log::error!("请求失败 [{}]: {}", config.name, error_msg);
+            
+            // 分析错误类型
+            if e.is_timeout() {
+                log::error!("可能原因: 网络超时，请检查网络连接");
+            } else if e.is_connect() {
+                log::error!("可能原因: 无法连接到服务器，请检查:");
+                log::error!("  1. API 地址是否正确: {}", config.api_endpoint);
+                log::error!("  2. 网络连接是否正常");
+                log::error!("  3. 防火墙是否拦截了出站连接");
+                log::error!("  4. 代理设置是否正确");
+            } else if e.is_request() {
+                log::error!("可能原因: 请求构建失败，可能是配置问题");
+            }
+            
+            error_msg
+        })?;
 
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
-        return Err(format!("请求失败 {}: {}", status, text));
+        let error_msg = format!("请求失败 {}: {}", status, text);
+        log::error!("API 返回错误 [{}]: {}", config.name, error_msg);
+        
+        // 分析 HTTP 状态码
+        match status.as_u16() {
+            401 => log::error!("API Key 无效或已过期"),
+            403 => log::error!("访问被拒绝，请检查 API Key 权限"),
+            429 => log::error!("请求过于频繁，已触发限流"),
+            500..=599 => log::error!("服务器内部错误，请稍后重试"),
+            _ => {}
+        }
+        
+        return Err(error_msg);
     }
+    
+    log::debug!("请求成功 [{}]: {}", config.name, config.api_endpoint);
     Ok(response)
 }
 
@@ -146,13 +195,16 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
                 let state = state_clone.lock().unwrap();
                 (state.config.models.clone(), state.config.polling_interval)
             };
+            // 固定节奏：以本轮开始时刻计时，稍后扣除本轮耗时，
+            // 避免请求耗时把实际周期越拉越长（P3-1）
+            let cycle_start = tokio::time::Instant::now();
 
             for model in &models {
                 match poll_model_usage(model).await {
                     Ok(record) => {
                         {
-                            let mut state = state_clone.lock().unwrap();
-                            append_and_prune(&mut *state, &model.id, record);
+                            let state = state_clone.lock().unwrap();
+                            append_to_storage(&*state, model, record);
                         }
                         // 通知前端更新用量
                         let _ = app_handle_clone.emit_all("usage-updated", &model.id);
@@ -166,6 +218,11 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
                     }
                     Err(e) => {
                         log::error!("轮询模型 {} 失败: {}", model.name, e);
+                        // 记录到数据库
+                        {
+                            let state = state_clone.lock().unwrap();
+                            let _ = state.storage.log_error("poller", &format!("轮询模型 {} 失败", model.name), &e);
+                        }
                         let changed = match last_error.get(&model.id) {
                             Some(prev) => *prev != e,
                             None => true,
@@ -181,7 +238,9 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
                 }
             }
 
-            tokio::time::sleep(Duration::from_millis(interval)).await;
+            // 周期 = 固定间隔 - 本轮耗时；下限 1s 兜底，避免间隔配置为 0 时空转
+            let interval = Duration::from_millis(interval.max(1000));
+            tokio::time::sleep(interval.saturating_sub(cycle_start.elapsed())).await;
         }
     });
 }

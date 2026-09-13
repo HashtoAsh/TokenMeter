@@ -27,6 +27,9 @@ export interface DailyStats {
 // 贴边状态
 export type EdgeState = 'docked' | 'hovering' | 'expanded';
 
+// 贴边方向（窗口靠在屏幕哪一侧）
+export type DockSide = 'left' | 'right';
+
 // 预设模板
 export interface ModelTemplate {
   name: string;

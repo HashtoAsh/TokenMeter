@@ -40,9 +40,12 @@
 | reqwest | 0.11.27 | MIT / Apache-2.0 | HTTP 客户端（rustls-tls） |
 | tokio | 1.53.1 | MIT | 异步运行时 |
 | chrono | 0.4.45 | MIT / Apache-2.0 | 时间处理 |
-| uuid | 1.26.0 | MIT / Apache-2.0 | 模型 ID |
 | log | 0.4.34 | MIT / Apache-2.0 | 日志门面 |
 | env_logger | 0.10.2 | MIT / Apache-2.0 | 日志输出 |
+| rusqlite | 0.31（bundled） | MIT | 本地 SQLite 持久化（自带 SQLite 源码，无需系统库） |
+| single-instance | 0.3 | MIT | 单实例互斥体 |
+| winreg | 0.52 | MIT | 开机自启动注册表项 |
+| dirs / hostname / uuid | 5.0 / 0.3 / 1.x | MIT / Apache-2.0 | 调试日志的用户标识（机器名 + 随机段） |
 
 ## 打包相关（随产物分发/下载的组件）
 
@@ -51,7 +54,16 @@
 | NSIS（打包工具，构建期下载） | zlib License | 生成 Windows 安装器 |
 | nsis-tauri-utils（tauri 插件） | MIT | NSIS 辅助插件 |
 | WebView2 Runtime（目标机运行时） | Microsoft 专有（可再发行） | 由 Tauri 应用作为依赖安装 |
+| SQLite（bundled 源码） | Public Domain | 由 rusqlite 的 bundled 特性编译进产物 |
 | Rust 标准库及间接 crates | 各 crate 自带 | 见 `cargo license` 全量结果 |
+
+## 间接依赖（随 tauri 传递引入，仍会编译进产物）
+
+| 依赖 | 版本 | 许可证 | 引入路径 |
+|------|------|--------|----------|
+| uuid | 1.26.0 | MIT / Apache-2.0 | tauri → tauri-utils → infer → cfb |
+
+> 模型 ID 由前端生成（`model-<时间戳>-<随机串>`），`uuid` 仅用于调试日志的用户标识。
 
 ## 备注
 

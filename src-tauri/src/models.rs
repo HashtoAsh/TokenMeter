@@ -67,10 +67,9 @@ pub struct AppConfig {
 }
 
 /// 应用状态
-#[derive(Debug)]
 pub struct AppState {
     pub config: AppConfig,
-    pub usage_data: std::collections::HashMap<String, Vec<UsageRecord>>,
+    pub storage: crate::storage::Storage,
     /// 当前配置文件路径（启动时解析一次，读写共用同一路径）
     pub config_path: std::path::PathBuf,
 }
@@ -105,4 +104,91 @@ impl Default for DailyStats {
             total_cost: 0.0,
         }
     }
+}
+
+/// 每日详情（查询结果）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyDetail {
+    pub date: String,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: u64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: u64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: u64,
+    #[serde(rename = "requestCount")]
+    pub request_count: u32,
+    #[serde(rename = "totalCost")]
+    pub total_cost: f64,
+}
+
+/// 每日花费（图表用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DailyCost {
+    pub date: String,
+    pub cost: f64,
+}
+
+/// API Key 信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyInfo {
+    #[serde(rename = "apiKeyMask")]
+    pub api_key_mask: String,
+    pub provider: String,
+}
+
+/// 请求记录条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordItem {
+    pub id: i64,
+    pub timestamp: i64,
+    #[serde(rename = "inputTokens")]
+    pub input_tokens: u64,
+    #[serde(rename = "outputTokens")]
+    pub output_tokens: u64,
+    #[serde(rename = "totalTokens")]
+    pub total_tokens: u64,
+    pub cost: f64,
+    pub ignored: bool,
+}
+
+/// 清理统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CleanupStats {
+    #[serde(rename = "recordCount")]
+    pub record_count: u32,
+    #[serde(rename = "totalCost")]
+    pub total_cost: f64,
+    #[serde(rename = "cutoffDate")]
+    pub cutoff_date: String,
+}
+
+/// 调试日志
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DebugLog {
+    pub id: i64,
+    pub timestamp: i64,
+    pub level: String,
+    pub module: String,
+    pub message: String,
+    pub detail: String,
+    #[serde(rename = "userId")]
+    pub user_id: String,
+}
+
+/// 日志统计
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogStats {
+    pub total: u32,
+    pub errors: u32,
+    pub warnings: u32,
+    pub info: u32,
+}
+
+/// 查询参数
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryParams {
+    pub dimension: String,      // "api" | "model" | "total"
+    pub filter: Option<String>, // provider名称 或 model_id
+    pub date: String,           // "2024-01-15"
 }

@@ -13,35 +13,24 @@
     "allowlist": {
       "all": false,
       "window": {
-        "all": true,
-        "startDragging": true,
-        "setAlwaysOnTop": true,
-        "setDecorations": true,
-        "setResizable": true,
-        "setPosition": true,
-        "setSize": true,
-        "setSkipTaskbar": true,
-        "show": true,
-        "hide": true
-      },
-      "shell": {
         "all": false,
-        "open": true
-      },
-      "http": {
-        "all": true,
-        "request": true
-      },
-      "notification": {
-        "all": true
+        "create": true,
+        "show": true,
+        "hide": true,
+        "close": true,
+        "setFocus": true,
+        "unminimize": true,
+        "setSize": true,
+        "setPosition": true,
+        "startDragging": true
       }
     },
     "windows": [
       {
         "label": "main",
         "title": "TokenMeter",
-        "width": 300,
-        "height": 160,
+        "width": 22,
+        "height": 130,
         "resizable": false,
         "transparent": true,
         "decorations": false,
@@ -54,7 +43,7 @@
       "iconAsTemplate": true
     },
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src ipc: http://ipc.localhost; frame-src 'none'; object-src 'none'; base-uri 'self'; form-action 'none'"
     },
     "bundle": {
       "active": true,

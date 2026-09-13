@@ -2,31 +2,24 @@ import { useStore } from '../stores/useStore';
 import { useWindowDrag } from '../hooks/useWindowDrag';
 import { formatMoney, formatTokens } from '../utils/money';
 
-export default function QuickInfo() {
-  const { models, stats, pollStatus, selectedModelId, setEdgeState, setShowDetail, setSelectedModel } = useStore();
+interface QuickInfoProps {
+  onClick?: () => void;
+}
+
+export default function QuickInfo({ onClick }: QuickInfoProps) {
+  const { models, stats, pollStatus, selectedModelId } = useStore();
   const dragProps = useWindowDrag();
   
   const selectedModel = models.find(m => m.id === selectedModelId) || models[0];
   const currentStats = selectedModel ? stats[selectedModel.id] : null;
   const currentStatus = selectedModel ? pollStatus[selectedModel.id] : undefined;
 
-  // 鼠标离开时回到贴边状态
-  const handleMouseLeave = () => {
-    setEdgeState('docked');
-  };
-
-  // 点击展开详情
-  const handleClick = () => {
-    setEdgeState('expanded');
-  };
-
   return (
     <div
       onPointerDown={dragProps}
       className="h-screen w-full bg-gray-800/95 backdrop-blur-md text-white p-4
                  animate-slide-in cursor-pointer"
-      onMouseLeave={handleMouseLeave}
-      onClick={handleClick}
+      onClick={onClick}
     >
       {/* 标题 */}
       <div className="flex items-center justify-between mb-4 cursor-move">
@@ -65,6 +58,8 @@ export default function QuickInfo() {
               {formatMoney(currentStats?.totalCost ?? 0, selectedModel.currency)}
             </div>
           </div>
+
+          <div className="text-[10px] text-gray-500">仅统计本应用轮询请求的用量</div>
 
           {/* 最近一次轮询失败提示 */}
           {currentStatus && !currentStatus.ok && (
