@@ -192,7 +192,7 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
 
         loop {
             let (models, interval) = {
-                let state = state_clone.lock().unwrap();
+                let state = state_clone.lock().unwrap_or_else(|e| e.into_inner());
                 (state.config.models.clone(), state.config.polling_interval)
             };
             // 固定节奏：以本轮开始时刻计时，稍后扣除本轮耗时，
@@ -203,7 +203,7 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
                 match poll_model_usage(model).await {
                     Ok(record) => {
                         {
-                            let state = state_clone.lock().unwrap();
+                            let state = state_clone.lock().unwrap_or_else(|e| e.into_inner());
                             append_to_storage(&*state, model, record);
                         }
                         // 通知前端更新用量
@@ -220,7 +220,7 @@ pub fn start_polling(app_handle: tauri::AppHandle, state: Arc<Mutex<AppState>>) 
                         log::error!("轮询模型 {} 失败: {}", model.name, e);
                         // 记录到数据库
                         {
-                            let state = state_clone.lock().unwrap();
+                            let state = state_clone.lock().unwrap_or_else(|e| e.into_inner());
                             let _ = state.storage.log_error("poller", &format!("轮询模型 {} 失败", model.name), &e);
                         }
                         let changed = match last_error.get(&model.id) {

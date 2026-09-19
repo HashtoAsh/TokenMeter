@@ -1,5 +1,6 @@
 use crate::models::*;
 use crate::poller;
+use crate::crypto;
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, State};
 
@@ -22,6 +23,7 @@ fn resolve_config_path() -> std::path::PathBuf {
 }
 
 /// 加载配置；返回 (配置, 实际使用的配置文件路径)
+/// 自动解密 API Key，明文 Key 会自动加密并回写
 pub fn load_config() -> (AppConfig, std::path::PathBuf) {
     let path = resolve_config_path();
     log::info!("尝试加载配置文件: {}", path.display());
@@ -47,8 +49,38 @@ pub fn load_config() -> (AppConfig, std::path::PathBuf) {
     };
     
     match serde_json::from_str::<AppConfig>(&content) {
-        Ok(cfg) => {
+        Ok(mut cfg) => {
             log::info!("配置解析成功，模型数量: {}", cfg.models.len());
+            
+            // 解密所有模型的 API Key
+            let mut needs_save = false;
+            for model in &mut cfg.models {
+                match crypto::decrypt_api_key(&model.api_key) {
+                    Ok(decrypted) => {
+                        if decrypted != model.api_key {
+                            // Key was encrypted, update with decrypted version
+                            model.api_key = decrypted;
+                        } else if !crypto::is_encrypted(&model.api_key) && !model.api_key.is_empty() {
+                            // Key is plaintext, needs encryption
+                            log::info!("检测到明文 API Key，正在加密...");
+                            model.api_key = crypto::encrypt_api_key(&model.api_key);
+                            needs_save = true;
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("解密 API Key 失败: {}", e);
+                    }
+                }
+            }
+            
+            // 如果有明文 Key 被加密，保存配置
+            if needs_save {
+                log::info!("自动加密明文 API Key 并保存配置");
+                if let Err(e) = save_config(&cfg, &path) {
+                    log::error!("保存加密后的配置失败: {}", e);
+                }
+            }
+            
             (cfg, path)
         }
         Err(e) => {
@@ -67,9 +99,17 @@ pub fn load_config() -> (AppConfig, std::path::PathBuf) {
     }
 }
 
-/// 保存配置到指定路径
+/// 保存配置到指定路径（自动加密 API Key）
 pub fn save_config(config: &AppConfig, path: &std::path::Path) -> Result<(), String> {
-    let content = serde_json::to_string_pretty(config)
+    // 创建加密后的配置副本
+    let mut encrypted_config = config.clone();
+    for model in &mut encrypted_config.models {
+        if !model.api_key.is_empty() && !crypto::is_encrypted(&model.api_key) {
+            model.api_key = crypto::encrypt_api_key(&model.api_key);
+        }
+    }
+    
+    let content = serde_json::to_string_pretty(&encrypted_config)
         .map_err(|e| format!("序列化配置失败: {}", e))?;
     std::fs::write(path, content)
         .map_err(|e| format!("写入配置文件失败 ({}): {}", path.display(), e))?;
@@ -79,7 +119,7 @@ pub fn save_config(config: &AppConfig, path: &std::path::Path) -> Result<(), Str
 /// 获取所有模型配置
 #[tauri::command]
 pub fn get_models(state: State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<ModelConfig>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     Ok(state.config.models.clone())
 }
 
@@ -89,7 +129,7 @@ pub fn add_model(
     state: State<'_, Arc<Mutex<AppState>>>,
     model: ModelConfig,
 ) -> Result<Vec<ModelConfig>, String> {
-    let mut state = state.lock().unwrap();
+    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
     
     // 检查ID是否重复
     if state.config.models.iter().any(|m| m.id == model.id) {
@@ -107,7 +147,7 @@ pub fn update_model(
     state: State<'_, Arc<Mutex<AppState>>>,
     model: ModelConfig,
 ) -> Result<Vec<ModelConfig>, String> {
-    let mut state = state.lock().unwrap();
+    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
     
     if let Some(index) = state.config.models.iter().position(|m| m.id == model.id) {
         state.config.models[index] = model;
@@ -124,7 +164,7 @@ pub fn delete_model(
     state: State<'_, Arc<Mutex<AppState>>>,
     id: String,
 ) -> Result<Vec<ModelConfig>, String> {
-    let mut state = state.lock().unwrap();
+    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.config.models.retain(|m| m.id != id);
     // usage_data removed - using SQLite storage
     save_config(&state.config, &state.config_path)?;
@@ -154,7 +194,7 @@ pub fn get_daily_stats(
     state: State<'_, Arc<Mutex<AppState>>>,
     model_id: String,
 ) -> Result<DailyStats, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     
     let detail = state.storage.query_daily_detail("model", Some(&model_id), &today)?;
@@ -173,7 +213,7 @@ pub fn get_daily_stats(
 pub fn get_all_daily_stats(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<std::collections::HashMap<String, DailyStats>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     let mut result = std::collections::HashMap::new();
 
@@ -199,14 +239,14 @@ pub async fn trigger_poll(
     app: tauri::AppHandle,
 ) -> Result<(), String> {
     let models = {
-        let s = state.lock().unwrap();
+        let s = state.lock().unwrap_or_else(|e| e.into_inner());
         s.config.models.clone()
     };
 
     for model in &models {
         match poller::poll_model_usage(model).await {
             Ok(record) => {
-                let s = state.lock().unwrap();
+                let s = state.lock().unwrap_or_else(|e| e.into_inner());
                 // 与自动轮询共用“追加 + 今日裁剪”，保持口径一致
                 poller::append_to_storage(&*s, model, record);
                 drop(s);
@@ -219,7 +259,7 @@ pub async fn trigger_poll(
                 log::error!("手动轮询模型 {} 失败: {}", model.name, e);
                 // 记录到数据库
                 {
-                    let s = state.lock().unwrap();
+                    let s = state.lock().unwrap_or_else(|e| e.into_inner());
                     let _ = s.storage.log_error("commands", &format!("手动轮询模型 {} 失败", model.name), &e);
                 }
                 let _ = app.emit_all(
@@ -242,7 +282,7 @@ pub fn query_usage_detail(
     state: State<'_, Arc<Mutex<AppState>>>,
     params: QueryParams,
 ) -> Result<DailyDetail, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.query_daily_detail(
         &params.dimension,
         params.filter.as_deref(),
@@ -258,7 +298,7 @@ pub fn get_daily_costs(
     filter: Option<String>,
     days: u32,
 ) -> Result<Vec<DailyCost>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_daily_costs(&dimension, filter.as_deref(), days)
 }
 
@@ -267,7 +307,7 @@ pub fn get_daily_costs(
 pub fn get_api_key_list(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<ApiKeyInfo>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_api_key_list()
 }
 
@@ -280,7 +320,7 @@ pub fn get_daily_records(
     date: String,
     show_ignored: bool,
 ) -> Result<Vec<RecordItem>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_daily_records(&dimension, filter.as_deref(), &date, show_ignored)
 }
 
@@ -290,7 +330,7 @@ pub fn ignore_record(
     state: State<'_, Arc<Mutex<AppState>>>,
     record_id: i64,
 ) -> Result<(), String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.ignore_record(record_id)
 }
 
@@ -300,7 +340,7 @@ pub fn unignore_record(
     state: State<'_, Arc<Mutex<AppState>>>,
     record_id: i64,
 ) -> Result<(), String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.unignore_record(record_id)
 }
 
@@ -312,7 +352,7 @@ pub fn get_recent_logs(
     state: State<'_, Arc<Mutex<AppState>>>,
     limit: u32,
 ) -> Result<Vec<DebugLog>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_recent_logs(limit)
 }
 
@@ -323,7 +363,7 @@ pub fn get_logs_by_level(
     level: String,
     limit: u32,
 ) -> Result<Vec<DebugLog>, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_logs_by_level(&level, limit)
 }
 
@@ -332,7 +372,7 @@ pub fn get_logs_by_level(
 pub fn get_log_stats(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<LogStats, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_log_stats()
 }
 
@@ -432,7 +472,7 @@ pub fn disable_autostart() -> Result<(), String> {
 pub fn get_cleanup_stats(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<CleanupStats, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.get_cleanup_stats(3) // 保留3个月
 }
 
@@ -443,7 +483,7 @@ pub fn export_month_csv(
     year: i32,
     month: u32,
 ) -> Result<String, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     state.storage.export_month_csv(year, month)
 }
 
@@ -452,7 +492,7 @@ pub fn export_month_csv(
 pub fn cleanup_old_data(
     state: State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<usize, String> {
-    let state = state.lock().unwrap();
+    let state = state.lock().unwrap_or_else(|e| e.into_inner());
     let stats = state.storage.get_cleanup_stats(3)?;
     state.storage.cleanup_before(&stats.cutoff_date)
 }

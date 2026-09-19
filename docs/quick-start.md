@@ -1,6 +1,6 @@
 # TokenMeter — Quick Start (Windows)
 
-**English** | [中文](quick-start.ZH.md)
+> 本文档包含中英文双语内容。
 
 ## 1. Requirements
 

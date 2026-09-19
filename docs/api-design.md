@@ -1,6 +1,6 @@
 # TokenMeter — Interfaces and Protocols
 
-**English** | [中文](api-design.ZH.md)
+> 本文档包含中英文双语内容。
 
 TokenMeter has no separate server and does not intercept other programs' requests. This document covers two kinds of
 interface: ① the HTTP calls the app makes to LLM APIs; ② the Tauri IPC between the frontend (WebView) and the Rust

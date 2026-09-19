@@ -4,6 +4,7 @@ mod models;
 mod commands;
 mod poller;
 mod storage;
+mod crypto;
 
 use models::AppState;
 use storage::Storage;
@@ -160,8 +161,9 @@ fn main() {
         }
         Err(e) => {
             log::error!("数据库初始化失败: {}", e);
-            // 记录到数据库（如果可能）
-            panic!("数据库初始化失败: {}", e);
+            eprintln!("TokenMeter 数据库初始化失败: {}", e);
+            eprintln!("请检查数据库文件权限或磁盘空间。");
+            std::process::exit(1);
         }
     };
     

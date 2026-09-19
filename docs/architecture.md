@@ -1,6 +1,6 @@
 # TokenMeter — Architecture
 
-**English** | [中文](architecture.ZH.md)
+> 本文档包含中英文双语内容。
 
 ## 1. Scope and boundaries
 

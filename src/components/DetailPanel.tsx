@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { useStore } from '../stores/useStore';
 import { useWindowDrag } from '../hooks/useWindowDrag';
@@ -30,9 +30,9 @@ export default function DetailPanel() {
   const currentStats = selectedModel ? stats[selectedModel.id] : null;
 
   // 检查自启动状态
-  useState(() => {
+  useEffect(() => {
     invoke<boolean>('is_autostart_enabled').then(setAutoStart).catch(() => setAutoStart(false));
-  });
+  }, []);
 
   // 手动轮询
   const handlePoll = async () => {

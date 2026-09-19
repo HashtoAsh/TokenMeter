@@ -12,6 +12,7 @@ import DetailPanel from './components/DetailPanel';
 import ModelManager from './components/ModelManager';
 import PollErrorAlert from './components/PollErrorAlert';
 import DataCleanupDialog from './components/DataCleanupDialog';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // 独立"添加模型"窗口（?add=1）：只渲染表单，完成后自动关闭
 const isAddModelWindow = () =>
@@ -158,32 +159,38 @@ function App() {
   }, []);
 
   if (standaloneAdd) {
-    return <ModelManager />;
+    return (
+      <ErrorBoundary>
+        <ModelManager />
+      </ErrorBoundary>
+    );
   }
 
   return (
-    <>
-      <div
-        className="w-full h-screen bg-transparent"
-        onMouseEnter={handleMouseEnter}
-        onMouseLeave={handleMouseLeave}
-      >
-        {/* 贴边悬浮条 */}
-        {edgeState === 'docked' && <FloatingBar edge={dockSide} />}
+    <ErrorBoundary>
+      <>
+        <div
+          className="w-full h-screen bg-transparent"
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+        >
+          {/* 贴边悬浮条 */}
+          {edgeState === 'docked' && <FloatingBar edge={dockSide} />}
 
-        {/* Hover 显示简单信息 */}
-        {edgeState === 'hovering' && <QuickInfo onClick={handleClick} />}
+          {/* Hover 显示简单信息 */}
+          {edgeState === 'hovering' && <QuickInfo onClick={handleClick} />}
 
-        {/* 点击展开详情 */}
-        {edgeState === 'expanded' && <DetailPanel />}
-      </div>
+          {/* 点击展开详情 */}
+          {edgeState === 'expanded' && <DetailPanel />}
+        </div>
 
-      {/* 轮询异常弹窗 */}
-      <PollErrorAlert />
+        {/* 轮询异常弹窗 */}
+        <PollErrorAlert />
 
-      {/* 数据清理弹窗 */}
-      <DataCleanupDialog />
-    </>
+        {/* 数据清理弹窗 */}
+        <DataCleanupDialog />
+      </>
+    </ErrorBoundary>
   );
 }
 

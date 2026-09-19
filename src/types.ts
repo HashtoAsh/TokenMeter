@@ -42,6 +42,7 @@ export interface ModelTemplate {
 
 // 预设模板列表
 export const MODEL_TEMPLATES: ModelTemplate[] = [
+  // ── 国内 ──
   {
     name: 'DeepSeek',
     provider: 'deepseek-chat',
@@ -59,11 +60,52 @@ export const MODEL_TEMPLATES: ModelTemplate[] = [
     currency: 'CNY',
   },
   {
+    name: '通义千问',
+    provider: 'qwen-plus',
+    apiEndpoint: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    inputPrice: 0.0008,
+    outputPrice: 0.002,
+    currency: 'CNY',
+  },
+  {
+    name: 'Kimi (Moonshot)',
+    provider: 'moonshot-v1-8k',
+    apiEndpoint: 'https://api.moonshot.cn/v1/chat/completions',
+    inputPrice: 0.000012,
+    outputPrice: 0.000012,
+    currency: 'CNY',
+  },
+  {
+    name: '智谱 GLM',
+    provider: 'glm-4-flash',
+    apiEndpoint: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
+    inputPrice: 0.001,
+    outputPrice: 0.001,
+    currency: 'CNY',
+  },
+  {
+    name: 'MiniMax',
+    provider: 'MiniMax-Text-01',
+    apiEndpoint: 'https://api.minimax.chat/v1/chat/completions',
+    inputPrice: 0.001,
+    outputPrice: 0.001,
+    currency: 'CNY',
+  },
+  // ── 海外 ──
+  {
     name: 'ChatGPT',
     provider: 'gpt-4o',
     apiEndpoint: 'https://api.openai.com/v1/chat/completions',
     inputPrice: 0.005,
     outputPrice: 0.015,
+    currency: 'USD',
+  },
+  {
+    name: 'OpenRouter',
+    provider: 'openai/gpt-4o-mini',
+    apiEndpoint: 'https://openrouter.ai/api/v1/chat/completions',
+    inputPrice: 0.00015,
+    outputPrice: 0.0006,
     currency: 'USD',
   },
 ];

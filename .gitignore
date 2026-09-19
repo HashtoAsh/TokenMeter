@@ -19,6 +19,9 @@ config.json
 # ---- 本机专属（仅本地参考，不入库）----
 .local/
 
+# ---- AgentTeams / 审查产物（不入仓库）----
+.agent-teams/
+
 # ---- 发布产物 ----
 output/
 

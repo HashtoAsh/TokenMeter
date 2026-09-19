@@ -1,6 +1,6 @@
 # TokenMeter — Tech Stack
 
-**English** | [中文](tech-stack.ZH.md)
+> 本文档包含中英文双语内容。
 
 ## 1. Overview
 
