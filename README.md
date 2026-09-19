@@ -88,7 +88,6 @@ At runtime the app reads and writes `config.json` in the **working directory** (
 - [docs/architecture.md](docs/architecture.md) — module breakdown, data flow, window state machine, storage
 - [docs/api-design.md](docs/api-design.md) — Tauri commands and events, config schema, HTTP request shape
 - [docs/tech-stack.md](docs/tech-stack.md) — the actual dependency list and key engineering configuration
-- [docs/progress.md](docs/progress.md) — change history and root-cause notes
 - [docs/third-party-licenses.md](docs/third-party-licenses.md) — third-party dependency licenses
 
 ## Changelog

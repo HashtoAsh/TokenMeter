@@ -1,7 +1,5 @@
 # TokenMeter — Quick Start (Windows)
 
-> 本文档包含中英文双语内容。
-
 ## 1. Requirements
 
 | Component | Notes |

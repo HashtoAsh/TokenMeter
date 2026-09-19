@@ -1,7 +1,5 @@
 # TokenMeter — Architecture
 
-> 本文档包含中英文双语内容。
-
 ## 1. Scope and boundaries
 
 A Windows desktop floating-window application: every `pollingInterval` (10 minutes by default) it sends one minimal

@@ -13,7 +13,6 @@ LLM APIs. For an overview of the project see the repository root [README.md](../
 | [architecture.md](architecture.md) | module breakdown, data flow, window state machine, SQLite storage |
 | [api-design.md](api-design.md) | Tauri commands and events, config schema, polling requests and parsing |
 | [tech-stack.md](tech-stack.md) | the actual dependency list and key engineering configuration |
-| [progress.md](progress.md) | change history and root-cause notes |
 | [third-party-licenses.md](third-party-licenses.md) | third-party dependency licenses |
 | [config.example.json](config.example.json) | configuration template |
 
@@ -43,7 +42,6 @@ TokenMeter 是一个 **Windows 桌面悬浮窗**，定期探测 OpenAI 兼容大
 | [architecture.md](architecture.md) | 模块划分、数据流、窗口状态机、SQLite 存储 |
 | [api-design.md](api-design.md) | Tauri 命令与事件、config schema、轮询请求与解析 |
 | [tech-stack.md](tech-stack.md) | 真实依赖清单与关键工程配置 |
-| [progress.md](progress.md) | 改进历史与问题根因记录 |
 | [third-party-licenses.md](third-party-licenses.md) | 第三方依赖许可证 |
 | [config.example.json](config.example.json) | 配置模板 |
 

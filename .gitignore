@@ -22,6 +22,9 @@ config.json
 # ---- AgentTeams / 审查产物（不入仓库）----
 .agent-teams/
 
+# ---- 过程性文档（仅本地，不入仓库）----
+docs/progress.md
+
 # ---- 发布产物 ----
 output/
 

@@ -1,7 +1,5 @@
 # TokenMeter — Tech Stack
 
-> 本文档包含中英文双语内容。
-
 ## 1. Overview
 
 | Layer | Technology | Version (per the manifest files) |
